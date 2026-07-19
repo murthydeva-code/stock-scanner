@@ -13,3 +13,12 @@
           with pd.ExcelWriter(filename) as writer:
               df.to_excel(writer, sheet_name="Sheet1")
           EOF
+      - name: Commit Excel report back to repo
+        run: |
+          mkdir -p reports
+          mv output_*.xlsx reports/
+          git config --global user.name "github-actions"
+          git config --global user.email "github-actions@github.com"
+          git add reports/output_*.xlsx
+          git commit -m "Add daily Excel scan report with timestamp"
+          git push
