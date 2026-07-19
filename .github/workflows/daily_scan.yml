@@ -2,7 +2,7 @@ name: Daily Scan
 
 on:
   schedule:
-    - cron: "0 6 * * *"   # runs daily at 6 AM UTC
+    - cron: "30 3 * * *"   # runs daily at 9 AM IST
   workflow_dispatch:
 
 jobs:
@@ -20,7 +20,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-          pip install papermill nbconvert
+          pip install papermill nbconvert openpyxl pandas
 
       - name: Run notebook
         run: papermill Untitled16.ipynb output.ipynb
@@ -31,6 +31,30 @@ jobs:
       - name: Convert notebook to PDF
         run: jupyter nbconvert --to pdf output.ipynb
 
+      - name: Export results to Excel
+        run: |
+          python - <<'EOF'
+          import nbformat, pandas as pd
+          from nbconvert import NotebookExporter
+          nb = nbformat.read("output.ipynb", as_version=4)
+          # Collect dataframe outputs
+          dfs = []
+          for cell in nb.cells:
+              if cell.cell_type == "code" and "outputs" in cell:
+                  for out in cell.outputs:
+                      if out.output_type == "execute_result" and "data" in out and "text/plain" in out.data:
+                          try:
+                              df = eval(out.data["text/plain"])
+                              if isinstance(df, pd.DataFrame):
+                                  dfs.append(df)
+                          except Exception:
+                              pass
+          if dfs:
+              with pd.ExcelWriter("output.xlsx") as writer:
+                  for i, df in enumerate(dfs, 1):
+                      df.to_excel(writer, sheet_name=f"Sheet{i}")
+          EOF
+
       - name: Upload results
         uses: actions/upload-artifact@v3
         with:
@@ -39,3 +63,4 @@ jobs:
             output.ipynb
             output.html
             output.pdf
+            output.xlsx
