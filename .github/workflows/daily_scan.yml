@@ -1,24 +1,18 @@
-      - name: Export results to Excel
-        run: |
-          python - <<'EOF'
-          import pandas as pd
-          from datetime import datetime
+name: Daily Stock Scan
 
-          # Dummy fallback DataFrame
-          df = pd.DataFrame({"Status":["No data"], "Note":["Notebook produced no DataFrame"]})
+on:
+  schedule:
+    - cron: "30 3 * * *"   # Runs daily at 9 AM IST
+  workflow_dispatch:
 
-          today = datetime.now().strftime("%Y-%m-%d")
-          filename = f"output_{today}.xlsx"
-
-          with pd.ExcelWriter(filename) as writer:
-              df.to_excel(writer, sheet_name="Sheet1")
-          EOF
-      - name: Commit Excel report back to repo
-        run: |
-          mkdir -p reports
-          mv output_*.xlsx reports/
-          git config --global user.name "github-actions"
-          git config --global user.email "github-actions@github.com"
-          git add reports/output_*.xlsx
-          git commit -m "Add daily Excel scan report with timestamp"
-          git push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+      # … rest of your steps …
