@@ -35,9 +35,9 @@ jobs:
         run: |
           python - <<'EOF'
           import nbformat, pandas as pd
-          from nbconvert import NotebookExporter
           nb = nbformat.read("output.ipynb", as_version=4)
-          # Collect dataframe outputs
+
+          sheet_names = ["RSI_Scan", "Volume_Profile", "Pivot_Levels", "Gap_Up_Orders"]
           dfs = []
           for cell in nb.cells:
               if cell.cell_type == "code" and "outputs" in cell:
@@ -49,18 +49,19 @@ jobs:
                                   dfs.append(df)
                           except Exception:
                               pass
-          if dfs:
-              with pd.ExcelWriter("output.xlsx") as writer:
-                  for i, df in enumerate(dfs, 1):
-                      df.to_excel(writer, sheet_name=f"Sheet{i}")
+
+          with pd.ExcelWriter("output.xlsx") as writer:
+              for i, df in enumerate(dfs):
+                  sheet_name = sheet_names[i] if i < len(sheet_names) else f"Sheet{i+1}"
+                  df.to_excel(writer, sheet_name=sheet_name)
           EOF
 
-      - name: Upload results
-        uses: actions/upload-artifact@v3
-        with:
-          name: notebook-results
-          path: |
-            output.ipynb
-            output.html
-            output.pdf
-            output.xlsx
+      - name: Commit Excel report back to repo
+        run: |
+          mkdir -p reports
+          mv output.xlsx reports/output.xlsx
+          git config --global user.name "github-actions"
+          git config --global user.email "github-actions@github.com"
+          git add reports/output.xlsx
+          git commit -m "Add daily Excel scan report"
+          git push
