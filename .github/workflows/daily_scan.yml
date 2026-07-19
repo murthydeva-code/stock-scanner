@@ -1,13 +1,14 @@
-name: Daily Scan
+name: Daily Stock Scan
 
 on:
   schedule:
-    - cron: "30 3 * * *"   # runs daily at 9 AM IST
+    - cron: "30 3 * * *"   # Runs daily at 9 AM IST
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v3
@@ -19,22 +20,17 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt
-          pip install papermill nbconvert openpyxl pandas
+          pip install nbformat pandas openpyxl
 
       - name: Run notebook
-        run: papermill Untitled16.ipynb output.ipynb
-
-      - name: Convert notebook to HTML
-        run: jupyter nbconvert --to html output.ipynb
-
-      - name: Convert notebook to PDF
-        run: jupyter nbconvert --to pdf output.ipynb
+        run: |
+          jupyter nbconvert --to notebook --execute output.ipynb --output output.ipynb
 
       - name: Export results to Excel
         run: |
           python - <<'EOF'
           import nbformat, pandas as pd
+          from datetime import datetime
           nb = nbformat.read("output.ipynb", as_version=4)
 
           sheet_names = ["RSI_Scan", "Volume_Profile", "Pivot_Levels", "Gap_Up_Orders"]
@@ -50,7 +46,10 @@ jobs:
                           except Exception:
                               pass
 
-          with pd.ExcelWriter("output.xlsx") as writer:
+          today = datetime.now().strftime("%Y-%m-%d")
+          filename = f"output_{today}.xlsx"
+
+          with pd.ExcelWriter(filename) as writer:
               for i, df in enumerate(dfs):
                   sheet_name = sheet_names[i] if i < len(sheet_names) else f"Sheet{i+1}"
                   df.to_excel(writer, sheet_name=sheet_name)
@@ -59,9 +58,19 @@ jobs:
       - name: Commit Excel report back to repo
         run: |
           mkdir -p reports
-          mv output.xlsx reports/output.xlsx
+          mv output_*.xlsx reports/
           git config --global user.name "github-actions"
           git config --global user.email "github-actions@github.com"
-          git add reports/output.xlsx
-          git commit -m "Add daily Excel scan report"
+          git add reports/output_*.xlsx
+          git commit -m "Add daily Excel scan report with timestamp"
           git push
+
+      - name: Upload results as artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: notebook-results
+          path: |
+            output.ipynb
+            output.html
+            output.pdf
+            reports/output_*.xlsx
