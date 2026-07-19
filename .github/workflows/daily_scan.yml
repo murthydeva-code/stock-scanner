@@ -1,76 +1,15 @@
-name: Daily Stock Scan
-
-on:
-  schedule:
-    - cron: "30 3 * * *"   # Runs daily at 9 AM IST
-  workflow_dispatch:
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v3
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: "3.10"
-
-      - name: Install dependencies
-        run: |
-          pip install nbformat pandas openpyxl
-
-      - name: Run notebook
-        run: |
-          jupyter nbconvert --to notebook --execute output.ipynb --output output.ipynb
-
       - name: Export results to Excel
         run: |
           python - <<'EOF'
-          import nbformat, pandas as pd
+          import pandas as pd
           from datetime import datetime
-          nb = nbformat.read("output.ipynb", as_version=4)
 
-          sheet_names = ["RSI_Scan", "Volume_Profile", "Pivot_Levels", "Gap_Up_Orders"]
-          dfs = []
-          for cell in nb.cells:
-              if cell.cell_type == "code" and "outputs" in cell:
-                  for out in cell.outputs:
-                      if out.output_type == "execute_result" and "data" in out and "text/plain" in out.data:
-                          try:
-                              df = eval(out.data["text/plain"])
-                              if isinstance(df, pd.DataFrame):
-                                  dfs.append(df)
-                          except Exception:
-                              pass
+          # Dummy fallback DataFrame
+          df = pd.DataFrame({"Status":["No data"], "Note":["Notebook produced no DataFrame"]})
 
           today = datetime.now().strftime("%Y-%m-%d")
           filename = f"output_{today}.xlsx"
 
           with pd.ExcelWriter(filename) as writer:
-              for i, df in enumerate(dfs):
-                  sheet_name = sheet_names[i] if i < len(sheet_names) else f"Sheet{i+1}"
-                  df.to_excel(writer, sheet_name=sheet_name)
+              df.to_excel(writer, sheet_name="Sheet1")
           EOF
-
-      - name: Commit Excel report back to repo
-        run: |
-          mkdir -p reports
-          mv output_*.xlsx reports/
-          git config --global user.name "github-actions"
-          git config --global user.email "github-actions@github.com"
-          git add reports/output_*.xlsx
-          git commit -m "Add daily Excel scan report with timestamp"
-          git push
-
-      - name: Upload results as artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: notebook-results
-          path: |
-            output.ipynb
-            output.html
-            output.pdf
-            reports/output_*.xlsx
