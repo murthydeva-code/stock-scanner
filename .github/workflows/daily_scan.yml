@@ -26,34 +26,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
       
-      - name: Install Playwright browser (for PDF rendering)
-        run: |
-          python -m playwright install chromium --with-deps
-      
-      - name: Run scanner (auto-sends Telegram alert)
+      - name: Run scanner (auto-sends Telegram text alert)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python3 scripts/scanner_full.py
-      
-      - name: Build watchlist HTML
-        run: |
-          python3 scripts/build_watchlist_html.py
-      
-      - name: Render PDF + send via Telegram
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: |
-          python3 scripts/render_pdf.py output/scanner_watchlist_full.html output/scanner_watchlist_full.pdf
-          python3 -c "
-          import sys
-          sys.path.insert(0, 'scripts')
-          import telegram_alert
-          if telegram_alert.BOT_TOKEN and telegram_alert.CHAT_ID:
-              telegram_alert.send_document('output/scanner_watchlist_full.pdf', caption='📊 Full watchlist PDF')
-          "
       
       - name: Upload scan results as artifact (kept for 30 days)
         uses: actions/upload-artifact@v4
