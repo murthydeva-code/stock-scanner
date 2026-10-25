@@ -19,10 +19,20 @@ jobs:
         with:
           python-version: '3.12'
       
-      - name: Install Python dependencies
+      - name: Install Python dependencies (with debug)
         run: |
+          echo "=== Upgrading pip ==="
           python -m pip install --upgrade pip
-          pip install yfinance pandas numpy
+          echo "=== Installing numpy ==="
+          pip install numpy
+          echo "=== Installing pandas ==="
+          pip install pandas
+          echo "=== Installing yfinance ==="
+          pip install yfinance
+          echo "=== Installed packages (verification) ==="
+          pip list | grep -i numpy
+          pip list | grep -i pandas
+          pip list | grep -i yfinance
       
       - name: Run scanner (auto-sends Telegram text alert)
         env:
