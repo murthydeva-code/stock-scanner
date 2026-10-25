@@ -1,21 +1,6 @@
 #!/usr/bin/env python3
 """
 Telegram alert module — sends scan results to user's Telegram via Bot API.
-
-Setup (one-time):
-  1. Create a bot via @BotFather → get BOT_TOKEN
-  2. Run: python3 setup_telegram.py    # captures your chat_id
-  3. Save to env vars (or ~/.trading_bot.env):
-       export TELEGRAM_BOT_TOKEN="123456:ABC-..."
-       export TELEGRAM_CHAT_ID="987654321"
-
-Usage in code:
-  from telegram_alert import send_alert, send_scan_summary
-  send_alert("Hello from your trading bot!")
-  send_scan_summary(scan_results_dict)
-
-CLI usage:
-  python3 telegram_alert.py "Test message from your scanner"
 """
 
 import os
@@ -26,15 +11,10 @@ import urllib.parse
 import urllib.error
 
 
-# ============================================================
-# Config — read from environment variables or .env file
-# ============================================================
-
 ENV_FILE = os.path.expanduser("~/.trading_bot.env")
 
 
 def _load_env():
-    """Load TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID from env file if env vars not set."""
     if not os.environ.get("TELEGRAM_BOT_TOKEN") and os.path.isfile(ENV_FILE):
         with open(ENV_FILE) as f:
             for line in f:
@@ -53,14 +33,9 @@ BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 
-# ============================================================
-# Telegram Bot API helpers
-# ============================================================
-
 def bot_request(method, params=None):
-    """Call a Telegram Bot API method. Returns parsed JSON response."""
     if not BOT_TOKEN:
-        raise RuntimeError("TELEGRAM_BOT_TOKEN not set. Run setup_telegram.py first.")
+        raise RuntimeError("TELEGRAM_BOT_TOKEN not set.")
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
     if params:
         data = urllib.parse.urlencode(params).encode('utf-8')
@@ -78,9 +53,8 @@ def bot_request(method, params=None):
 
 
 def send_alert(message, parse_mode="Markdown"):
-    """Send a text message to CHAT_ID. Returns True on success."""
     if not CHAT_ID:
-        raise RuntimeError("TELEGRAM_CHAT_ID not set. Run setup_telegram.py first.")
+        raise RuntimeError("TELEGRAM_CHAT_ID not set.")
     try:
         result = bot_request("sendMessage", {
             "chat_id": CHAT_ID,
@@ -90,7 +64,6 @@ def send_alert(message, parse_mode="Markdown"):
         })
         return bool(result.get("ok"))
     except RuntimeError as e:
-        # Try without Markdown if parsing fails (Telegram is strict about Markdown)
         if parse_mode == "Markdown":
             try:
                 result = bot_request("sendMessage", {
@@ -107,13 +80,11 @@ def send_alert(message, parse_mode="Markdown"):
 
 
 def send_document(file_path, caption=""):
-    """Send a file (e.g., PDF watchlist) to CHAT_ID."""
     if not CHAT_ID or not BOT_TOKEN:
-        raise RuntimeError("Telegram credentials not set. Run setup_telegram.py first.")
+        raise RuntimeError("Telegram credentials not set.")
     if not os.path.isfile(file_path):
         raise FileNotFoundError(f"File not found: {file_path}")
 
-    # Use multipart/form-data via urllib (no requests library needed)
     boundary = "----TradingBotBoundary" + str(hash(file_path))
     with open(file_path, 'rb') as f:
         file_data = f.read()
@@ -142,12 +113,7 @@ def send_document(file_path, caption=""):
         return False
 
 
-# ============================================================
-# Formatters — convert scan results to Telegram-friendly Markdown
-# ============================================================
-
 def format_scan_summary(scan_data, max_winners=3, max_near_miss=5):
-    """Convert scanner JSON output to a Markdown-formatted Telegram message."""
     scan_date = scan_data.get("scan_date", "today")
     total_scanned = scan_data.get("total_scanned", 0)
     total_passing = scan_data.get("total_passing", 0)
@@ -171,18 +137,20 @@ def format_scan_summary(scan_data, max_winners=3, max_near_miss=5):
     if qualifying:
         lines.append(f"")
         lines.append(f"*🏆 TODAY'S QUALIFYING STOCKS*")
-        lines.append(f"_(all 7 rules pass)_")
+        lines.append(f"_(all 7 rules pass — Mansfield RS shown)_")
         for r in qualifying[:max_winners]:
             sym = r.get("symbol", "?")
             price = r.get("last_price", 0)
             rsi = r.get("rsi_d", 0)
             ema30w = r.get("ema30_w", 0)
             ema60m = r.get("ema60_m", 0)
+            mrs = r.get("mansfield_rs", 0)
             lines.append(f"")
-            lines.append(f"*{sym}* ₹{price:,.2f}")
+            lines.append(f"*{sym}* Rs {price:,.2f}")
             lines.append(f"  RSI: {rsi:.1f}")
-            lines.append(f"  30EMA(W): ₹{ema30w:,.2f}")
-            lines.append(f"  60EMA(M): ₹{ema60m:,.2f}")
+            lines.append(f"  30EMA(W): Rs {ema30w:,.2f}")
+            lines.append(f"  60EMA(M): Rs {ema60m:,.2f}")
+            lines.append(f"  Mansfield RS: {mrs:+.2f}")
             lines.append(f"  ✅ all 7 rules pass")
     else:
         lines.append(f"")
@@ -198,22 +166,22 @@ def format_scan_summary(scan_data, max_winners=3, max_near_miss=5):
             sym = r.get("symbol", "?")
             price = r.get("last_price", 0)
             rsi = r.get("rsi_d", 0)
+            mrs = r.get("mansfield_rs", 0)
             failed = [k.replace("rule", "").split("_", 1)[0]
                       for k, v in r.get("rules", {}).items() if not v]
             fail_str = ",".join(failed)
-            lines.append(f"• *{sym}* ₹{price:,.2f} · RSI {rsi:.1f} · R{fail_str} fail")
+            lines.append(f"• *{sym}* Rs {price:,.2f} · RSI {rsi:.1f} · MRS {mrs:+.2f} · R{fail_str} fail")
 
     lines.append(f"")
     lines.append(f"━━━━━━━━━━━━━━━━━━")
     lines.append(f"")
-    lines.append(f"_Strategy: 7-rule multi-timeframe momentum_")
+    lines.append(f"_Strategy: 7-rule Weinstein momentum (Mansfield RS + Stage 2 EMA)_")
     lines.append(f"_Verify on TradingView before deploying capital_")
 
     return "\n".join(lines)
 
 
 def send_scan_summary(scan_data, pdf_path=None):
-    """Send formatted scan summary + optional PDF attachment to Telegram."""
     msg = format_scan_summary(scan_data)
     if len(msg) > 4090:
         msg = msg[:4090] + "..."
@@ -228,16 +196,11 @@ def send_scan_summary(scan_data, pdf_path=None):
     return True
 
 
-# ============================================================
-# CLI entry point
-# ============================================================
-
 def main():
-    """CLI: send a test alert."""
     if len(sys.argv) < 2:
-        print("Usage: python3 telegram_alert.py \"your message here\"")
-        print("Or:    python3 telegram_alert.py --status    # check credentials")
-        print("Or:    python3 telegram_alert.py --test      # send test message")
+        print("Usage: python3 telegram_alert.py \"your message\"")
+        print("Or:    python3 telegram_alert.py --status")
+        print("Or:    python3 telegram_alert.py --test")
         sys.exit(1)
 
     if sys.argv[1] == "--status":
