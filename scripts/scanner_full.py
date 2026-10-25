@@ -8,8 +8,8 @@ Strategy rules (7 — ALL must pass):
   2. Weekly close > Weekly EMA 60
   3. Monthly close > Monthly EMA 60
   4. Daily RSI(14) between 45 and 58
-  5. RS vs NIFTY 50 > 0 (today's RS higher than yesterday's)
-  6. RS line > its 60-period MA (daily)
+  5. Mansfield RS > 0 (outperforming NIFTY 50 over 52 weeks)
+  6. Mansfield RS is rising (current > previous week)
   7. Daily close > Daily EMA 20
 """
 
@@ -29,22 +29,12 @@ except ImportError:
     sys.exit(1)
 
 
-# ============================================================
-# Path configuration — RELATIVE paths so it works anywhere
-# ============================================================
-
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(SCRIPT_DIR)
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", os.path.join(REPO_ROOT, "output"))
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-
 RESULTS_JSON_PATH = os.path.join(OUTPUT_DIR, "scanner_full_results.json")
 WATCHLIST_PDF_PATH = os.path.join(OUTPUT_DIR, "scanner_watchlist_full.pdf")
-
-
-# ============================================================
-# Stock Universe — NIFTY Midcap 100 + Smallcap 250
-# ============================================================
 
 NIFTY_MIDCAP_100 = [
     "ASHOKLEY", "BHARATFORGE", "BLUESTAR", "EXIDEIND", "COLPAL", "HEROMOTOCO",
@@ -92,10 +82,6 @@ NIFTY_50_SYMBOL = "^NSEI"
 DATA_PERIOD = "5y"
 
 
-# ============================================================
-# Indicator functions
-# ============================================================
-
 def to_weekly(daily_df):
     return daily_df.resample('W-FRI').agg({
         'Open': 'first', 'High': 'max', 'Low': 'min',
@@ -130,15 +116,27 @@ def compute_rs_line(stock_close, benchmark_close):
     return aligned['stock'] / aligned['benchmark']
 
 
+def compute_mansfield_rs(stock_weekly_close, nifty_weekly_close, period=52):
+    """Compute Mansfield Relative Strength using weekly data + 52-week SMA.
+    Formula: MRS = (RS_ratio / SMA(RS_ratio, 52)) x 100 - 100
+    MRS > 0 -> outperforming NIFTY 50; MRS rising -> Stage 2 candidate."""
+    aligned = pd.concat([stock_weekly_close, nifty_weekly_close], axis=1, join='inner').dropna()
+    aligned.columns = ['stock', 'benchmark']
+    rs_ratio_weekly = aligned['stock'] / aligned['benchmark']
+    rs_sma_52w = rs_ratio_weekly.rolling(window=period).mean()
+    mansfield_rs = (rs_ratio_weekly / rs_sma_52w) * 100 - 100
+    return mansfield_rs
+
+
 def check_strategy(symbol, stock_daily, nifty_daily):
     """Check all 7 strategy rules."""
     result = {
-        'symbol': symbol,
-        'last_price': None,
+        'symbol': symbol, 'last_price': None,
         'close_w': None, 'ema30_w': None, 'ema60_w': None,
         'close_m': None, 'ema60_m': None,
         'rsi_d': None, 'ema20_d': None,
         'rs_now': None, 'rs_prev': None, 'rs_diff': None, 'rs_60ma': None,
+        'mansfield_rs': None, 'mrs_prev': None,
         'rules': {}, 'passes_all': False, 'error': None,
     }
 
@@ -178,6 +176,17 @@ def check_strategy(symbol, stock_daily, nifty_daily):
     rs_60ma_series = rs_line.rolling(60).mean()
     rs_60ma_last = float(rs_60ma_series.iloc[-1]) if not pd.isna(rs_60ma_series.iloc[-1]) else None
 
+    nifty_weekly = to_weekly(nifty_daily)
+    if len(nifty_weekly) < 60:
+        result['error'] = 'insufficient NIFTY weekly data for Mansfield RS'
+        return result
+    mrs_series = compute_mansfield_rs(weekly['Close'], nifty_weekly['Close'])
+    if len(mrs_series) < 5 or pd.isna(mrs_series.iloc[-1]):
+        result['error'] = 'insufficient data for Mansfield RS calculation'
+        return result
+    mrs_last = float(mrs_series.iloc[-1])
+    mrs_prev = float(mrs_series.iloc[-2]) if len(mrs_series) > 1 and not pd.isna(mrs_series.iloc[-2]) else None
+
     ema20_d_series = compute_ema(stock_daily['Close'], 20)
     ema20_d_last = float(ema20_d_series.iloc[-1]) if not pd.isna(ema20_d_series.iloc[-1]) else None
 
@@ -188,6 +197,7 @@ def check_strategy(symbol, stock_daily, nifty_daily):
         'rsi_d': rsi_last, 'ema20_d': ema20_d_last,
         'rs_now': rs_now, 'rs_prev': rs_prev, 'rs_diff': rs_diff,
         'rs_60ma': rs_60ma_last,
+        'mansfield_rs': mrs_last, 'mrs_prev': mrs_prev,
     })
 
     rules = {
@@ -195,8 +205,8 @@ def check_strategy(symbol, stock_daily, nifty_daily):
         'rule2_weekly_close_above_ema60': close_w is not None and ema60_w_last is not None and close_w > ema60_w_last,
         'rule3_monthly_close_above_ema60': close_m is not None and ema60_m_last is not None and close_m > ema60_m_last,
         'rule4_daily_rsi_between_45_58': rsi_last is not None and 45.0 <= rsi_last <= 58.0,
-        'rule5_rs_vs_nifty_above_zero': rs_diff > 0,
-        'rule6_rs_above_60ma': rs_now is not None and rs_60ma_last is not None and rs_now > rs_60ma_last,
+        'rule5_mansfield_rs_above_zero': mrs_last is not None and mrs_last > 0,
+        'rule6_mansfield_rs_rising': mrs_last is not None and mrs_prev is not None and mrs_last > mrs_prev,
         'rule7_daily_close_above_ema20': last_price is not None and ema20_d_last is not None and last_price > ema20_d_last,
     }
     result['rules'] = {k: bool(v) for k, v in rules.items()}
@@ -204,12 +214,7 @@ def check_strategy(symbol, stock_daily, nifty_daily):
     return result
 
 
-# ============================================================
-# Telegram alert hook
-# ============================================================
-
 def send_telegram_alert(scan_output):
-    """Send scan summary + PDF to Telegram if credentials are configured."""
     try:
         sys.path.insert(0, SCRIPT_DIR)
         import telegram_alert
@@ -221,31 +226,25 @@ def send_telegram_alert(scan_output):
 
     if not telegram_alert.BOT_TOKEN or not telegram_alert.CHAT_ID:
         print()
-        print("  ℹ  Telegram not configured — skipping alert.")
+        print("  Telegram not configured - skipping alert.")
         return
 
     print()
-    print("  ─── Sending Telegram alert ───")
+    print("  --- Sending Telegram alert ---")
     try:
         pdf_path = WATCHLIST_PDF_PATH if os.path.isfile(WATCHLIST_PDF_PATH) else None
         success = telegram_alert.send_scan_summary(scan_output, pdf_path=pdf_path)
         if success:
-            print("  ✓ Alert sent to Telegram.")
-            if pdf_path:
-                print(f"  ✓ PDF watchlist attached.")
+            print("  Alert sent to Telegram.")
         else:
-            print("  ✗ Alert send failed.")
+            print("  Alert send failed.")
     except Exception as e:
-        print(f"  ✗ Telegram alert error: {e}")
+        print(f"  Telegram alert error: {e}")
 
-
-# ============================================================
-# Main scan loop
-# ============================================================
 
 def main():
     print("=" * 70)
-    print("  STOCK SCANNER · Midcap 100 + Smallcap 250 · 7-Rule Strategy")
+    print("  STOCK SCANNER - Midcap 100 + Smallcap 250 - 7-Rule Mansfield Strategy")
     print("=" * 70)
     print()
     print(f"  Output dir: {OUTPUT_DIR}")
@@ -270,7 +269,7 @@ def main():
         print(f"  ERROR: NIFTY 50 not in batch data. Aborting.")
         return
     nifty_daily = batch_data[NIFTY_50_SYMBOL].dropna()
-    print(f"  NIFTY 50: {len(nifty_daily)} bars, last close = ₹{nifty_daily['Close'].iloc[-1]:.2f}")
+    print(f"  NIFTY 50: {len(nifty_daily)} bars, last close = Rs {nifty_daily['Close'].iloc[-1]:.2f}")
     print()
 
     all_results = []
@@ -298,7 +297,7 @@ def main():
 
         if result.get('passes_all'):
             qualifying.append(result)
-            print(f"PASS  ₹{result['last_price']:>8.2f}  RSI={result['rsi_d']:.1f}")
+            print(f"PASS  Rs {result['last_price']:>8.2f}  RSI={result['rsi_d']:.1f}")
         elif result.get('error'):
             print(f"err ({result['error']})")
         else:
@@ -306,24 +305,25 @@ def main():
                             for k, v in result['rules'].items() if not v]
             if len(failed_rules) == 1:
                 near_miss.append(result)
-                print(f"NEAR (1 fail: {failed_rules[0]})  ₹{result['last_price']:.2f}")
+                print(f"NEAR (1 fail: {failed_rules[0]})  Rs {result['last_price']:.2f}")
             else:
                 print(f"fail ({len(failed_rules)} rules)")
 
     print()
     print("=" * 70)
-    print(f"  SCAN COMPLETE · {len(qualifying)}/{len(all_results)} stocks pass all 7 rules")
+    print(f"  SCAN COMPLETE - {len(qualifying)}/{len(all_results)} stocks pass all 7 rules")
     print(f"  Near-miss (6/7): {len(near_miss)}")
     print(f"  Fetch failures: {len(fetch_failed)}")
     print("=" * 70)
 
     if qualifying:
         print()
-        print("  ★ QUALIFYING STOCKS:")
+        print("  QUALIFYING STOCKS:")
         for r in qualifying:
-            print(f"    • {r['symbol']:14s} ₹{r['last_price']:>9.2f}  RSI={r['rsi_d']:>5.1f}")
+            mrs_val = r.get('mansfield_rs')
+            mrs_str = f"{mrs_val:+.2f}" if mrs_val is not None else 'N/A'
+            print(f"    - {r['symbol']:14s} Rs {r['last_price']:>9.2f}  RSI={r['rsi_d']:>5.1f}  MRS={mrs_str}")
 
-    # Save JSON
     output = {
         'scan_timestamp': datetime.now().isoformat(),
         'scan_date': datetime.now().strftime('%Y-%m-%d'),
@@ -339,8 +339,8 @@ def main():
             'Weekly close > Weekly EMA 60',
             'Monthly close > Monthly EMA 60',
             'Daily RSI(14) between 45 and 58',
-            'RS vs NIFTY 50 > 0 (today > yesterday)',
-            'RS line > its 60-period MA (daily)',
+            'Mansfield RS > 0 (outperforming NIFTY 50 over 52 weeks)',
+            'Mansfield RS is rising (current > previous week)',
             'Daily close > Daily EMA 20',
         ],
         'total_scanned': len(all_results),
@@ -357,7 +357,6 @@ def main():
     print()
     print(f"  Results saved to: {RESULTS_JSON_PATH}")
 
-    # Send Telegram alert
     send_telegram_alert(output)
 
     return output
