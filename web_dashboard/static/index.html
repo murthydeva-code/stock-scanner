@@ -1,0 +1,914 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KitePilot - Zerodha Algo Trading v1.0.0</title>
+  <link rel="stylesheet" href="/static/styles.css?v=20261030_v6">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="dark-theme">
+  <div class="app-container">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-icon">⚡</div>
+        <div class="brand-info">
+          <h2>KitePilot</h2>
+          <span class="version-badge">v1.0.0</span>
+        </div>
+      </div>
+
+      <nav class="nav-menu">
+        <button class="nav-item active" data-tab="market-indices">
+          <span class="nav-icon">📊</span>
+          <span class="nav-label">Market Indices</span>
+        </button>
+        <button class="nav-item" data-tab="algo-signals">
+          <span class="nav-icon">📈</span>
+          <span class="nav-label">Algo Signals</span>
+        </button>
+        <button class="nav-item" data-tab="orb-45min">
+          <span class="nav-icon">⏱️</span>
+          <span class="nav-label">ORB 45-Min</span>
+        </button>
+        <button class="nav-item" data-tab="stage-2">
+          <span class="nav-icon">🚀</span>
+          <span class="nav-label">Stage 2 Breakouts</span>
+        </button>
+        <button class="nav-item" data-tab="canslim">
+          <span class="nav-icon">🏆</span>
+          <span class="nav-label">CANSLIM Growth</span>
+        </button>
+        <button class="nav-item" data-tab="momentum-positional">
+          <span class="nav-icon">⚡</span>
+          <span class="nav-label">Momentum Positional</span>
+        </button>
+        <button class="nav-item" data-tab="btst">
+          <span class="nav-icon">🌙</span>
+          <span class="nav-label">BTST Momentum</span>
+        </button>
+        <button class="nav-item" data-tab="swing-setups">
+          <span class="nav-icon">🎯</span>
+          <span class="nav-label">Swing Setups</span>
+        </button>
+        <button class="nav-item" data-tab="gtt-placement">
+          <span class="nav-icon">📋</span>
+          <span class="nav-label">GTT Placement</span>
+        </button>
+        <button class="nav-item" data-tab="user">
+          <span class="nav-icon">👤</span>
+          <span class="nav-label">User</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="mode-indicator simulation">
+          <span class="status-dot green"></span>
+          <span>Simulation Active</span>
+        </div>
+        <div class="safety-note">Real Kite orders strictly blocked</div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- Top Header -->
+      <header class="top-header">
+        <div class="header-left">
+          <h1 id="page-title">High-volume breakout and retest setups</h1>
+        </div>
+        <div class="header-right">
+          <!-- Multi-Broker Switcher -->
+          <div class="broker-toggle-group" style="display: flex; gap: 4px; background: rgba(255,255,255,0.06); padding: 3px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12);">
+            <button class="btn btn-broker active" id="btn-broker-kite" data-broker="kite" style="padding: 4px 10px; font-size: 11px; border-radius: 6px; border: none; cursor: pointer; background: #38bdf8; color: #0f172a; font-weight: 600;">
+              ⚡ Kite
+            </button>
+            <button class="btn btn-broker" id="btn-broker-kotak" data-broker="kotak" style="padding: 4px 10px; font-size: 11px; border-radius: 6px; border: none; cursor: pointer; background: transparent; color: #94a3b8; font-weight: 600;">
+              🔷 Kotak Neo
+            </button>
+          </div>
+          <button class="btn btn-primary" id="btn-quick-kite-login" style="display: none; padding: 5px 12px; font-size: 11px; background: #f59e0b; color: #0f172a; font-weight: 700; border: none; border-radius: 6px; cursor: pointer; box-shadow: 0 0 10px rgba(245, 158, 11, 0.4);" title="Log into Zerodha Kite for today">
+            ⚡ Login Kite
+          </button>
+          <button class="btn btn-secondary" id="btn-fetch-live-prices" title="Fetch live NSE market quotes immediately" style="padding: 5px 12px; font-size: 11px;">
+            <span class="btn-icon">⚡</span> Refresh Live Prices
+          </button>
+          <div class="connection-status" id="ws-status-badge">
+            <span class="status-pulse yellow"></span>
+            <span id="ws-status-text">WS: Connecting...</span>
+          </div>
+          <div class="user-pill" id="user-pill">
+            <span class="user-avatar">ZP</span>
+            <span class="user-name-display" id="user-name-header">Trader</span>
+          </div>
+        </div>
+      </header>
+
+      <!-- TAB 0: Indian Market Indices Live Dashboard -->
+      <section id="tab-market-indices" class="tab-pane active">
+        <!-- Indices Summary Bar -->
+        <div class="action-summary-bar">
+          <div class="summary-stats">
+            <div class="stat-pill">
+              <span class="stat-label">Market Mood:</span>
+              <span class="stat-val green" id="stat-idx-mood">BULLISH</span>
+            </div>
+            <div class="stat-pill">
+              <span class="stat-label">Market Breadth:</span>
+              <span class="stat-val highlight" id="stat-idx-breadth">18 Adv / 13 Dec</span>
+            </div>
+            <div class="stat-pill">
+              <span class="stat-label">Tracked Indices:</span>
+              <span class="stat-val" id="stat-idx-count">31 Indices</span>
+            </div>
+            <div class="stat-pill">
+              <span class="stat-label">Live Feed Source:</span>
+              <span class="stat-val" id="stat-idx-source" style="color: #38bdf8;">Kite / Kotak Neo Live</span>
+            </div>
+          </div>
+          <div class="action-buttons">
+            <button class="btn btn-secondary" id="btn-refresh-indices" title="Fetch live index quotes immediately">
+              <span class="btn-icon">⚡</span> Refresh Indices
+            </button>
+          </div>
+        </div>
+
+        <!-- Benchmark Live Cards (Hero Grid) -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin-bottom: 20px;">
+          <!-- NIFTY 50 -->
+          <div class="table-card" style="padding: 16px; margin: 0; border-left: 4px solid #38bdf8; background: linear-gradient(135deg, rgba(56,189,248,0.06), rgba(15,23,42,0.8));">
+            <div style="display: flex; justify-content: space-between; align-items: baseline;">
+              <span style="font-size: 13px; font-weight: 700; color: #94a3b8;">NIFTY 50</span>
+              <span id="hero-nifty50-badge" class="badge-status ready">+0.42%</span>
+            </div>
+            <div id="hero-nifty50-ltp" style="font-size: 24px; font-weight: 700; font-family: monospace; color: #f8fafc; margin: 6px 0;">₹22,698.85</div>
+            <div id="hero-nifty50-pts" style="font-size: 12px; font-family: monospace; color: #4ade80;">+94.50 pts</div>
+          </div>
+
+          <!-- SENSEX -->
+          <div class="table-card" style="padding: 16px; margin: 0; border-left: 4px solid #f59e0b; background: linear-gradient(135deg, rgba(245,158,11,0.06), rgba(15,23,42,0.8));">
+            <div style="display: flex; justify-content: space-between; align-items: baseline;">
+              <span style="font-size: 13px; font-weight: 700; color: #94a3b8;">BSE SENSEX</span>
+              <span id="hero-sensex-badge" class="badge-status ready">+0.38%</span>
+            </div>
+            <div id="hero-sensex-ltp" style="font-size: 24px; font-weight: 700; font-family: monospace; color: #f8fafc; margin: 6px 0;">₹73,246.03</div>
+            <div id="hero-sensex-pts" style="font-size: 12px; font-family: monospace; color: #4ade80;">+275.40 pts</div>
+          </div>
+
+          <!-- BANK NIFTY -->
+          <div class="table-card" style="padding: 16px; margin: 0; border-left: 4px solid #10b981; background: linear-gradient(135deg, rgba(16,185,129,0.06), rgba(15,23,42,0.8));">
+            <div style="display: flex; justify-content: space-between; align-items: baseline;">
+              <span style="font-size: 13px; font-weight: 700; color: #94a3b8;">BANK NIFTY</span>
+              <span id="hero-banknifty-badge" class="badge-status success">+0.55%</span>
+            </div>
+            <div id="hero-banknifty-ltp" style="font-size: 24px; font-weight: 700; font-family: monospace; color: #f8fafc; margin: 6px 0;">₹54,267.40</div>
+            <div id="hero-banknifty-pts" style="font-size: 12px; font-family: monospace; color: #4ade80;">+296.80 pts</div>
+          </div>
+
+          <!-- INDIA VIX -->
+          <div class="table-card" style="padding: 16px; margin: 0; border-left: 4px solid #ef4444; background: linear-gradient(135deg, rgba(239,68,68,0.06), rgba(15,23,42,0.8));">
+            <div style="display: flex; justify-content: space-between; align-items: baseline;">
+              <span style="font-size: 13px; font-weight: 700; color: #94a3b8;">INDIA VIX (Volatility)</span>
+              <span id="hero-vix-badge" class="badge-status warning">Normal</span>
+            </div>
+            <div id="hero-vix-ltp" style="font-size: 24px; font-weight: 700; font-family: monospace; color: #f8fafc; margin: 6px 0;">16.25</div>
+            <div id="hero-vix-pts" style="font-size: 12px; font-family: monospace; color: #94a3b8;">-0.30 pts (-1.81%)</div>
+          </div>
+        </div>
+
+        <!-- Sector Performance Heatmap -->
+        <div class="table-card" style="margin-bottom: 20px;">
+          <div class="card-header">
+            <div class="title-with-badge">
+              <h3 class="table-title">Sectoral Performance Heatmap</h3>
+              <span class="pill-badge">Live Market Map</span>
+            </div>
+            <div class="criteria-badge">
+              Real-time Indian equity sector performance &amp; rotation
+            </div>
+          </div>
+          <div id="sector-heatmap-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; padding: 16px;">
+            <!-- Dynamic Sector Heatmap Tiles Generated by JS -->
+          </div>
+        </div>
+
+        <!-- Comprehensive All-Indices Live Table -->
+        <div class="table-card">
+          <div class="card-header">
+            <div class="title-with-badge">
+              <h3 class="table-title">All Indian Market Indices (Real-Time Quotes)</h3>
+              <span class="pill-badge" id="idx-total-badge">31 Indices</span>
+            </div>
+            <!-- Category Filter Buttons -->
+            <div style="display: flex; gap: 6px;">
+              <button class="btn btn-secondary btn-idx-filter active" data-filter="all" style="padding: 4px 10px; font-size: 11px;">All</button>
+              <button class="btn btn-secondary btn-idx-filter" data-filter="Broad Market" style="padding: 4px 10px; font-size: 11px;">Broad Market</button>
+              <button class="btn btn-secondary btn-idx-filter" data-filter="Sectoral" style="padding: 4px 10px; font-size: 11px;">Sectoral</button>
+              <button class="btn btn-secondary btn-idx-filter" data-filter="Thematic" style="padding: 4px 10px; font-size: 11px;">Thematic</button>
+            </div>
+          </div>
+
+          <div class="table-responsive">
+            <table class="data-table" id="table-all-indices">
+              <thead>
+                <tr>
+                  <th class="th-rank">#</th>
+                  <th class="th-symbol">Index Name</th>
+                  <th class="th-state">Category</th>
+                  <th class="th-price">Live Price</th>
+                  <th class="th-price">Change (Pts)</th>
+                  <th class="th-gains">Change (%)</th>
+                  <th class="th-price">Day Range</th>
+                  <th class="th-status">Market Sentiment</th>
+                  <th class="th-desc">Constituents &amp; Description</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-all-indices"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+
+      <!-- TAB 1: Algo Signals (PROMPT 3) -->
+      <section id="tab-algo-signals" class="tab-pane">
+        <div class="action-summary-bar">
+          <div class="summary-stats">
+            <div class="stat-pill">
+              <span class="stat-label">Triggered Breakouts:</span>
+              <span class="stat-val highlight" id="stat-triggered">0</span>
+            </div>
+            <div class="stat-pill">
+              <span class="stat-label">Stocks Scanned:</span>
+              <span class="stat-val" id="stat-scanned">0</span>
+            </div>
+            <div class="stat-pill live-pill">
+              <span class="stat-label">Live Feed:</span>
+              <span class="stat-val green" id="stat-ws-summary">Connecting...</span>
+            </div>
+          </div>
+
+          <div class="action-buttons">
+            <button class="btn btn-secondary" id="btn-refresh-scanner" title="Refresh Screener Data">
+              <span class="btn-icon">🔄</span> Rescan
+            </button>
+            <button class="btn btn-primary btn-run-live" id="btn-run-live" title="Run live check and simulate GTT placement">
+              <span class="btn-icon">🚀</span> Run Live
+            </button>
+          </div>
+        </div>
+
+        <div id="algo-error-box" class="alert-box error hidden"></div>
+        <div id="algo-info-box" class="alert-box info hidden"></div>
+
+        <div class="table-card">
+          <div class="card-header">
+            <div class="title-with-badge">
+              <h3 class="table-title">Triggered Breakouts</h3>
+              <span class="pill-badge" id="breakouts-badge">0 Setups</span>
+            </div>
+            <div class="criteria-badge">
+              Vol $\ge$ 3x | 20-D Lookback | Retest $\le$ 1% | Age $\le$ 20
+            </div>
+          </div>
+
+          <div class="table-responsive">
+            <table class="data-table" id="table-algo-signals">
+              <thead>
+                <tr>
+                  <th class="th-rank">Rank</th>
+                  <th class="th-symbol">Symbol</th>
+                  <th class="th-price">Current Price</th>
+                  <th class="th-date">Breakout Date</th>
+                  <th class="th-age">Age</th>
+                  <th class="th-vol">Breakout Vol</th>
+                  <th class="th-retest">Retest Distance</th>
+                  <th class="th-gains">Peak Gains</th>
+                  <th class="th-retrace">Retracement</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-algo-signals"></tbody>
+            </table>
+          </div>
+
+          <div id="state-algo-loading" class="state-overlay">
+            <div class="spinner"></div>
+            <span>Loading scanner cache...</span>
+          </div>
+          <div id="state-algo-empty" class="state-overlay hidden">
+            <span class="empty-icon">🔍</span>
+            <span class="empty-text">No breakout retest setups match the current parameters.</span>
+          </div>
+        </div>
+      </section>
+
+
+      <!-- TAB 2: ORB 45-Min -->
+      <section id="tab-orb-45min" class="tab-pane">
+        <div class="action-summary-bar">
+          <div class="summary-stats">
+            <div class="stat-pill">
+              <span class="stat-label">Bullish Breakouts:</span>
+              <span class="stat-val highlight" id="stat-orb-bull">0</span>
+            </div>
+            <div class="stat-pill">
+              <span class="stat-label">Bearish Breakdowns:</span>
+              <span class="stat-val" id="stat-orb-bear">0</span>
+            </div>
+            <div class="stat-pill">
+              <span class="stat-label">Window:</span>
+              <span class="stat-val green">09:15 - 10:00 IST (Execution 10:00 - 15:15)</span>
+            </div>
+          </div>
+          <div class="action-buttons" style="display: flex; align-items: center; gap: 8px;">
+            <div class="filter-pills" style="display: inline-flex; gap: 4px; background: rgba(15,23,42,0.6); padding: 3px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.08);">
+              <button class="btn-orb-filter active" data-filter="BULL" style="padding: 4px 10px; font-size: 11px; font-weight: 600; border-radius: 4px; border: 1px solid #059669; background: #065f46; color: #34d399; cursor: pointer;" title="Show Bullish Breakouts only">
+                🟢 Bull Only (<span id="filter-orb-bull-count">0</span>)
+              </button>
+              <button class="btn-orb-filter" data-filter="NEAR_BULL" style="padding: 4px 10px; font-size: 11px; font-weight: 500; border-radius: 4px; border: 1px solid transparent; background: transparent; color: #fbbf24; cursor: pointer;" title="Show Near Bull Breakouts">
+                🟡 Near Bull (<span id="filter-orb-near-count">0</span>)
+              </button>
+              <button class="btn-orb-filter" data-filter="BEAR" style="padding: 4px 10px; font-size: 11px; font-weight: 500; border-radius: 4px; border: 1px solid transparent; background: transparent; color: #f87171; cursor: pointer;" title="Show Bearish Breakdowns">
+                🔴 Bear (<span id="filter-orb-bear-count">0</span>)
+              </button>
+              <button class="btn-orb-filter" data-filter="ALL" style="padding: 4px 10px; font-size: 11px; font-weight: 500; border-radius: 4px; border: 1px solid transparent; background: transparent; color: #94a3b8; cursor: pointer;" title="Show All Breakouts">
+                All (<span id="filter-orb-all-count">0</span>)
+              </button>
+            </div>
+            <span id="orb-last-scanned" style="font-size: 11px; color: #38bdf8; font-weight: 500;"></span>
+            <button class="btn btn-primary" id="btn-run-orb" style="padding: 6px 14px; font-size: 11px; background: #0284c7; color: #fff; font-weight: 600; border: none; border-radius: 6px; cursor: pointer;" title="Trigger a live 45-min ORB scan right now">
+              <span class="btn-icon">⚡</span> Run Live Scan
+            </button>
+            <button class="btn btn-secondary" id="btn-refresh-orb" title="Refresh ORB 45 Data">
+              <span class="btn-icon">🔄</span> Refresh
+            </button>
+          </div>
+        </div>
+
+        <div class="table-card">
+          <div class="card-header">
+            <div class="title-with-badge">
+              <h3 class="table-title">45-Minute Opening Range Breakouts</h3>
+              <span class="pill-badge" id="orb-count-badge">0 Setups</span>
+            </div>
+            <div class="criteria-badge">
+              9 x 5-Min Candles | RVOL $\ge$ 2.0x | Price > VWAP | Target 1 & 2 Projections
+            </div>
+          </div>
+          <div class="table-responsive">
+            <table class="data-table" id="table-orb-45min">
+              <thead>
+                <tr>
+                  <th class="th-rank">#</th>
+                  <th class="th-symbol">Symbol</th>
+                  <th class="th-status">Type</th>
+                  <th class="th-price">Breakout Price</th>
+                  <th class="th-price">LTP</th>
+                  <th class="th-price">ORB High</th>
+                  <th class="th-price">ORB Low</th>
+                  <th class="th-vol">RVOL</th>
+                  <th class="th-price">VWAP</th>
+                  <th class="th-price">Target 1</th>
+                  <th class="th-price">Target 2</th>
+                  <th class="th-price">Stop Loss</th>
+                  <th class="th-state">R:R</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-orb-45min"></tbody>
+            </table>
+          </div>
+          <div id="state-orb-empty" class="state-overlay hidden">
+            <span class="empty-icon">⏱️</span>
+            <span class="empty-text">No active ORB 45 breakouts at this moment.</span>
+          </div>
+        </div>
+      </section>
+
+
+      <!-- TAB 3: Stage 2 Breakouts -->
+      <section id="tab-stage-2" class="tab-pane">
+        <div class="action-summary-bar">
+          <div class="summary-stats">
+            <div class="stat-pill">
+              <span class="stat-label">Qualifying Stage 2:</span>
+              <span class="stat-val highlight" id="stat-stage2-count">0</span>
+            </div>
+            <div class="stat-pill">
+              <span class="stat-label">NSE Universe:</span>
+              <span class="stat-val" id="stat-stage2-scanned">2,361</span>
+            </div>
+            <div class="stat-pill">
+              <span class="stat-label">Criteria:</span>
+              <span class="stat-val green">Weekly EMA 30/60 + Mansfield RS > 0 & Rising + RSI 45-58</span>
+            </div>
+          </div>
+          <div class="action-buttons" style="display: flex; align-items: center; gap: 8px;">
+            <span id="stage2-last-scanned" style="font-size: 11px; color: #38bdf8; font-weight: 500;"></span>
+            <button class="btn btn-primary" id="btn-run-stage2" style="padding: 6px 14px; font-size: 11px; background: #0284c7; color: #fff; font-weight: 600; border: none; border-radius: 6px; cursor: pointer;" title="Trigger a live Stage 2 scan right now">
+              <span class="btn-icon">⚡</span> Run Live Scan
+            </button>
+            <button class="btn btn-secondary" id="btn-refresh-stage2" title="Refresh Stage 2 Data">
+              <span class="btn-icon">🔄</span> Refresh
+            </button>
+          </div>
+        </div>
+
+        <div class="table-card">
+          <div class="card-header">
+            <div class="title-with-badge">
+              <h3 class="table-title">Stage 2 Trend Template Candidates</h3>
+              <span class="pill-badge" id="stage2-count-badge">0 Stocks</span>
+            </div>
+            <div class="criteria-badge">
+              Stan Weinstein Stage 2 Model | Weekly & Monthly Trend Alignment
+            </div>
+          </div>
+          <div class="table-responsive">
+            <table class="data-table" id="table-stage-2">
+              <thead>
+                <tr>
+                  <th class="th-rank">#</th>
+                  <th class="th-symbol">Symbol</th>
+                  <th class="th-price">Last Price</th>
+                  <th class="th-vol">Mansfield RS</th>
+                  <th class="th-vol">Daily RSI</th>
+                  <th class="th-vol">Monthly Vol</th>
+                  <th class="th-price">Daily EMA 20</th>
+                  <th class="th-price">Weekly Close</th>
+                  <th class="th-price">Weekly EMA 30</th>
+                  <th class="th-price">Weekly EMA 60</th>
+                  <th class="th-price">Monthly Close</th>
+                  <th class="th-price">Monthly EMA 60</th>
+                  <th class="th-status">Rules</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-stage-2"></tbody>
+            </table>
+          </div>
+          <div id="state-stage2-empty" class="state-overlay hidden">
+            <span class="empty-icon">🚀</span>
+            <span class="empty-text">No Stage 2 candidates found.</span>
+          </div>
+        </div>
+      </section>
+
+
+      <!-- TAB 4: CANSLIM Growth -->
+      <section id="tab-canslim" class="tab-pane">
+        <div class="action-summary-bar">
+          <div class="summary-stats">
+            <div class="stat-pill">
+              <span class="stat-label">CANSLIM Leaders:</span>
+              <span class="stat-val highlight" id="stat-canslim-count">0</span>
+            </div>
+            <div class="stat-pill">
+              <span class="stat-label">Market Direction (M):</span>
+              <span class="stat-val green" id="stat-canslim-market">Confirmed Uptrend</span>
+            </div>
+            <div class="stat-pill">
+              <span class="stat-label">System:</span>
+              <span class="stat-val">William O'Neil 7-Factor Model</span>
+            </div>
+          </div>
+          <div class="action-buttons">
+            <span id="canslim-last-scanned" style="font-size: 11px; color: #38bdf8; font-weight: 500; margin-right: 8px;"></span>
+            <button class="btn btn-secondary" id="btn-refresh-canslim" title="Refresh CANSLIM Data">
+              <span class="btn-icon">🔄</span> Refresh CANSLIM
+            </button>
+          </div>
+        </div>
+
+        <div class="table-card">
+          <div class="card-header">
+            <div class="title-with-badge">
+              <h3 class="table-title">William O'Neil CANSLIM Growth Leaders</h3>
+              <span class="pill-badge" id="canslim-count-badge">0 Leaders</span>
+            </div>
+            <div class="criteria-badge">
+              EPS YoY > 20% | Near 52W High | RS > 0 | Vol Surge > 1.2x | Institutional Backing
+            </div>
+          </div>
+          <div class="table-responsive">
+            <table class="data-table" id="table-canslim">
+              <thead>
+                <tr>
+                  <th class="th-rank">#</th>
+                  <th class="th-symbol">Symbol</th>
+                  <th class="th-price">Price</th>
+                  <th class="th-status">CANSLIM Score</th>
+                  <th class="th-vol">RS vs Nifty</th>
+                  <th class="th-retest">From 52W High</th>
+                  <th class="th-vol">Vol Surge</th>
+                  <th class="th-gains">YoY EPS Growth</th>
+                  <th class="th-gains">ROE %</th>
+                  <th class="th-state">Inst. Holding</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-canslim"></tbody>
+            </table>
+          </div>
+          <div id="state-canslim-empty" class="state-overlay hidden">
+            <span class="empty-icon">🏆</span>
+            <span class="empty-text">No CANSLIM qualifying stocks found.</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB: Momentum Positional Trading (7-Rule Mansfield Weinstein) -->
+      <section id="tab-momentum-positional" class="tab-pane">
+        <div class="action-summary-bar">
+          <div class="summary-stats">
+            <div class="stat-pill">
+              <span class="stat-label">Momentum Setups:</span>
+              <span class="stat-val highlight" id="stat-momentum-count">0</span>
+            </div>
+            <div class="stat-pill">
+              <span class="stat-label">Strategy:</span>
+              <span class="stat-val green">7-Rule Mansfield Weinstein</span>
+            </div>
+            <div class="stat-pill">
+              <span class="stat-label">Execution:</span>
+              <span class="stat-val">Kotak Neo CNC Delivery</span>
+            </div>
+          </div>
+          <div class="action-buttons">
+            <span id="momentum-last-scanned" style="font-size: 11px; color: #38bdf8; font-weight: 500; margin-right: 8px;"></span>
+            <button class="btn btn-primary" id="btn-sync-all-kotak" title="Sync All Tabs to Kotak Neo"><span class="btn-icon">⚡</span> Sync All Kotak Tabs</button>
+            <button class="btn btn-secondary" id="btn-refresh-momentum" title="Refresh Momentum Positional Data">
+              <span class="btn-icon">🔄</span> Refresh Momentum
+            </button>
+          </div>
+        </div>
+
+                <div class="kotak-tab-bar" id="kotak-tabs-container">
+          <button class="kotak-tab-btn active" data-kotak-tab="SWING_4IN1_MASTER">🌟 4-in-1 Master Swing</button>
+          <button class="kotak-tab-btn" data-kotak-tab="MOMENTUM_POSITIONAL_TRADING">🎯 7-Rule Positional</button>
+          <button class="kotak-tab-btn" data-kotak-tab="CONNORS_RSI2_DIPS">⚡ Connors RSI(2) Dips</button>
+          <button class="kotak-tab-btn" data-kotak-tab="MINERVINI_VCP_BREAKOUTS">🏆 Minervini VCP</button>
+          <button class="kotak-tab-btn" data-kotak-tab="QULLAMAGGIE_HTF_MOMENTUM">🚀 Qullamaggie HTF</button>
+          <button class="kotak-tab-btn" data-kotak-tab="WEINSTEIN_STAGE2_LEADERS">📈 Weinstein Stage 2</button>
+        </div>
+
+<div class="table-card">
+          <div class="card-header">
+            <div class="title-with-badge">
+              <h3 class="table-title">Momentum Positional Trading (Kotak Neo API)</h3>
+              <span class="pill-badge" id="momentum-count-badge">0 Setups</span>
+            </div>
+            <div class="criteria-badge">
+              Weekly &gt; EMA 30/60 | Monthly &gt; EMA 60 | Mansfield RS &gt; 0 &amp; Rising | Daily RSI 45-58 | Close &gt; Daily EMA 20
+            </div>
+          </div>
+          <div class="table-responsive">
+            <table class="data-table" id="table-momentum">
+              <thead>
+                <tr>
+                  <th class="th-rank">#</th>
+                  <th class="th-symbol">Stock / Kotak Scrip</th>
+                  <th class="th-state">Token</th>
+                  <th class="th-price">CMP</th>
+                  <th class="th-status">Status</th>
+                  <th class="th-vol">Mansfield RS</th>
+                  <th class="th-retest">Stop Loss</th>
+                  <th class="th-gains">Target 1 (2R)</th>
+                  <th class="th-gains">Target 2 (3R)</th>
+                  <th class="th-vol">CNC Qty</th>
+                  <th class="th-action">Action</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-momentum"></tbody>
+            </table>
+          </div>
+          <div id="state-momentum-empty" class="state-overlay hidden">
+            <span class="empty-icon">⚡</span>
+            <span class="empty-text">No Momentum Positional setups found. Run scan to populate.</span>
+          </div>
+        </div>
+      </section>
+
+
+      <!-- TAB 5: BTST Momentum -->
+      <section id="tab-btst" class="tab-pane">
+        <div class="action-summary-bar">
+          <div class="summary-stats">
+            <div class="stat-pill">
+              <span class="stat-label">BTST Candidates:</span>
+              <span class="stat-val highlight" id="stat-btst-count">0</span>
+            </div>
+            <div class="stat-pill">
+              <span class="stat-label">Entry Window:</span>
+              <span class="stat-val green">15:00 - 15:25 IST</span>
+            </div>
+            <div class="stat-pill">
+              <span class="stat-label">Exit Window:</span>
+              <span class="stat-val">Next Day 09:15 - 09:30 IST</span>
+            </div>
+          </div>
+          <div class="action-buttons" style="display: flex; align-items: center; gap: 8px;">
+            <span id="btst-last-scanned" style="font-size: 11px; color: #38bdf8; font-weight: 500;"></span>
+            <button class="btn btn-primary" id="btn-run-btst" style="padding: 6px 14px; font-size: 11px; background: #0284c7; color: #fff; font-weight: 600; border: none; border-radius: 6px; cursor: pointer;" title="Trigger a live BTST scan right now">
+              <span class="btn-icon">⚡</span> Run Live Scan
+            </button>
+            <button class="btn btn-secondary" id="btn-refresh-btst" title="Refresh BTST Data">
+              <span class="btn-icon">🔄</span> Refresh
+            </button>
+          </div>
+        </div>
+
+        <div class="table-card">
+          <div class="card-header">
+            <div class="title-with-badge">
+              <h3 class="table-title">BTST (Buy Today, Sell Tomorrow) Closing Momentum</h3>
+              <span class="pill-badge" id="btst-count-badge">0 Setups</span>
+            </div>
+            <div class="criteria-badge">
+              6-Factor Institutional Score ($\ge$ 80/100) | Close Near Day's High | 20-D Breakout
+            </div>
+          </div>
+          <div class="table-responsive">
+            <table class="data-table" id="table-btst">
+              <thead>
+                <tr>
+                  <th class="th-rank">#</th>
+                  <th class="th-symbol">Symbol</th>
+                  <th class="th-price">LTP</th>
+                  <th class="th-status">BTST Score</th>
+                  <th class="th-gains">Day Move</th>
+                  <th class="th-retest">From High</th>
+                  <th class="th-vol">Vol Ratio</th>
+                  <th class="th-vol">RSI(14)</th>
+                  <th class="th-price">Target 1</th>
+                  <th class="th-price">Target 2</th>
+                  <th class="th-price">Stop Loss</th>
+                  <th class="th-state">R:R</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-btst"></tbody>
+            </table>
+          </div>
+          <div id="state-btst-empty" class="state-overlay hidden">
+            <span class="empty-icon">🌙</span>
+            <span class="empty-text">No BTST candidates matching criteria at this time.</span>
+          </div>
+        </div>
+      </section>
+
+
+      <!-- TAB 6: Swing Setups -->
+      <section id="tab-swing-setups" class="tab-pane">
+        <div class="action-summary-bar">
+          <div class="summary-stats">
+            <div class="stat-pill">
+              <span class="stat-label">Swing Candidates:</span>
+              <span class="stat-val highlight" id="stat-swing-count">0</span>
+            </div>
+            <div class="stat-pill">
+              <span class="stat-label">Uptrend Filter:</span>
+              <span class="stat-val green">Close &gt; SMA50 &gt; SMA200</span>
+            </div>
+            <div class="stat-pill">
+              <span class="stat-label">Pullback Zone:</span>
+              <span class="stat-val">20 EMA / 50 SMA Support</span>
+            </div>
+            <div class="stat-pill">
+              <span class="stat-label">Risk/Reward:</span>
+              <span class="stat-val green">1:2 (T1) &amp; 1:3 (T2)</span>
+            </div>
+          </div>
+          <div class="action-buttons">
+            <button class="btn btn-secondary" id="btn-refresh-swing" title="Refresh Swing Trade Data">
+              <span class="btn-icon">🔄</span> Refresh Swing Data
+            </button>
+          </div>
+        </div>
+
+        <div class="table-card">
+          <div class="card-header">
+            <div class="title-with-badge">
+              <h3 class="table-title">Volume-Confirmed Swing Trade Setups</h3>
+              <span class="pill-badge" id="swing-count-badge">0 Setups</span>
+            </div>
+            <div class="criteria-badge">
+              Intermediate Uptrend + 20 EMA/50 SMA Pullback + Vol Expansion (&ge; 1.4x) + RSI 40-68
+            </div>
+          </div>
+          <div class="table-responsive">
+            <table class="data-table" id="table-swing-setups">
+              <thead>
+                <tr>
+                  <th class="th-rank">#</th>
+                  <th class="th-symbol">Symbol</th>
+                  <th class="th-price">LTP</th>
+                  <th class="th-status">Score</th>
+                  <th class="th-status">Setup Status</th>
+                  <th class="th-price">20 EMA</th>
+                  <th class="th-price">50 SMA</th>
+                  <th class="th-vol">Vol Ratio</th>
+                  <th class="th-vol">RSI(14)</th>
+                  <th class="th-price">Entry</th>
+                  <th class="th-price">Stop Loss</th>
+                  <th class="th-retest">Risk %</th>
+                  <th class="th-price">Target 1 (2R)</th>
+                  <th class="th-price">Target 2 (3R)</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-swing-setups"></tbody>
+            </table>
+          </div>
+          <div id="state-swing-empty" class="state-overlay hidden">
+            <span class="empty-icon">🎯</span>
+            <span class="empty-text">No active volume-confirmed swing setups detected.</span>
+          </div>
+        </div>
+      </section>
+
+
+      <!-- TAB 7: GTT Placement (PROMPT 4) -->
+      <section id="tab-gtt-placement" class="tab-pane">
+        <div class="gtt-header-card">
+          <div class="gtt-title-row">
+            <h2>GTT Placement (Simulated Workflow)</h2>
+            <div class="read-only-badge">
+              <span class="lock-icon">🔒</span> READ-ONLY STATUS
+            </div>
+          </div>
+          <p class="gtt-subtitle">
+            Buy Trigger = Breakout Low | Stoploss Trigger = 5% Below Buy (Planned After Buy) | Qty = 1
+          </p>
+        </div>
+
+        <div id="gtt-info-box" class="alert-box info hidden"></div>
+
+        <div class="table-card">
+          <div class="card-header">
+            <div class="title-with-badge">
+              <h3 class="table-title">Simulated GTT Candidates</h3>
+              <span class="pill-badge" id="gtt-count-badge">0 Candidates</span>
+            </div>
+            <div class="criteria-badge">
+              Atomic Duplicate Prevention | DUMMY- Prefix | Strict Zero-Broker-Order Safety
+            </div>
+          </div>
+
+          <div class="table-responsive">
+            <table class="data-table" id="table-gtt-placement">
+              <thead>
+                <tr>
+                  <th class="th-rank">#</th>
+                  <th class="th-symbol">Symbol</th>
+                  <th class="th-price">Buy Price</th>
+                  <th class="th-price">Stoploss (5%)</th>
+                  <th class="th-price">LTP</th>
+                  <th class="th-state">Account State</th>
+                  <th class="th-status">Buy Status</th>
+                  <th class="th-trigger">Trigger ID</th>
+                  <th class="th-sl-status">Stoploss Status</th>
+                  <th class="th-msg">Details / Reason</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-gtt-placement"></tbody>
+            </table>
+          </div>
+
+          <div id="state-gtt-empty" class="state-overlay hidden">
+            <span class="empty-icon">📋</span>
+            <span class="empty-text">No GTT candidates available. Run the Algo Signals screener first.</span>
+          </div>
+        </div>
+      </section>
+
+
+      <!-- TAB 7: User Profile & Kite Connection -->
+      <section id="tab-user" class="tab-pane">
+        <div class="user-profile-container">
+          <!-- Zerodha Kite Card -->
+          <div class="profile-card" id="card-kite-profile">
+            <div class="card-header">
+              <h3>Zerodha Kite Connect Authentication</h3>
+              <span class="status-chip connected" id="user-auth-chip">Connected</span>
+            </div>
+            <div class="card-body">
+              <div class="info-grid">
+                <div class="info-item">
+                  <span class="info-label">API Key</span>
+                  <span class="info-val mono" id="user-api-key">4quc****09kr</span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">Account Name</span>
+                  <span class="info-val" id="user-account-name">Kite Pilot User</span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">Execution Mode</span>
+                  <span class="info-val highlight-green">Paper Trading / Mandatory Simulation Guard</span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">Available Cash Margin</span>
+                  <span class="info-val mono">₹2,50,000.00</span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">Open Positions</span>
+                  <span class="info-val mono" id="user-open-positions">0</span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">Holdings Count</span>
+                  <span class="info-val mono" id="user-holdings">0</span>
+                </div>
+              </div>
+
+              <div class="safety-banner">
+                <div class="banner-icon">🛡️</div>
+                <div class="banner-text">
+                  <strong>Simulation Guard Active:</strong> All orders generate <code>DUMMY-</code> trigger IDs and persist in local storage. Real broker orders are strictly blocked.
+                </div>
+              </div>
+
+              <!-- Interactive Kite Daily Login Section -->
+              <div id="kite-login-panel" style="margin-top: 18px; padding: 16px; background: rgba(56, 189, 248, 0.05); border-radius: 8px; border: 1px solid rgba(56, 189, 248, 0.2);">
+                <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 12px;">
+                  <div>
+                    <div style="font-size: 13px; font-weight: 700; color: #38bdf8;">⚡ Daily Zerodha Kite Authentication</div>
+                    <div style="font-size: 11px; color: #94a3b8; margin-top: 2px;">
+                      Zerodha access tokens expire daily at 6:00 AM IST. Authenticate once each morning.
+                    </div>
+                  </div>
+                  <button class="btn btn-primary" id="btn-open-kite-auth" style="padding: 7px 16px; font-size: 12px; background: #0284c7; color: #ffffff; font-weight: 600; border: none; border-radius: 6px; cursor: pointer; display: flex; align-items: center; gap: 6px;">
+                    <span>🚀</span> 1-Click Open Kite Login
+                  </button>
+                </div>
+                
+                <div style="background: rgba(0,0,0,0.25); padding: 10px 12px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.06); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+                  <div style="font-size: 11px; color: #cbd5e1; flex: 1; min-width: 200px;">
+                    If redirect didn't auto-connect, paste your redirected URL or <code>request_token</code> here:
+                  </div>
+                  <div style="display: flex; gap: 8px; flex: 1; min-width: 280px;">
+                    <input type="text" id="input-kite-token" placeholder="Paste URL or request_token here..." style="flex: 1; padding: 6px 10px; background: #0f172a; border: 1px solid rgba(255,255,255,0.2); border-radius: 6px; color: #f8fafc; font-family: monospace; font-size: 12px;">
+                    <button class="btn btn-primary" id="btn-kite-login-submit" style="padding: 6px 14px; font-size: 12px; background: #38bdf8; color: #0f172a; font-weight: 700; border: none; border-radius: 6px; cursor: pointer; white-space: nowrap;">
+                      Connect Kite
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Kotak Neo Card -->
+          <div class="profile-card" id="card-kotak-profile" style="margin-top: 24px;">
+            <div class="card-header">
+              <h3>🔷 Kotak Securities Neo API Integration</h3>
+              <span class="status-chip" id="kotak-auth-chip" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8;">Connecting...</span>
+            </div>
+            <div class="card-body">
+              <div class="info-grid">
+                <div class="info-item">
+                  <span class="info-label">Kotak Client UCC</span>
+                  <span class="info-val mono" id="kotak-ucc">EP669</span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">Mobile Number</span>
+                  <span class="info-val mono" id="kotak-mobile">+919866045930</span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">API Status</span>
+                  <span class="info-val mono" id="kotak-api-status">Configured (.env)</span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">Brokerage Plan</span>
+                  <span class="info-val highlight-green">Trade Free / Zero Brokerage</span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">Trading Mode</span>
+                  <span class="info-val highlight-green">Paper Trading (Safe)</span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">Risk Per Trade</span>
+                  <span class="info-val mono">₹2,000.00</span>
+                </div>
+              </div>
+
+              <!-- Interactive Kotak Login Form -->
+              <div style="margin-top: 18px; padding: 16px; background: rgba(255,255,255,0.03); border-radius: 8px; border: 1px solid rgba(255,255,255,0.08); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+                <div>
+                  <div style="font-size: 13px; font-weight: 600; color: #f8fafc;">Authenticate Kotak Neo Session</div>
+                  <div style="font-size: 11px; color: #94a3b8;">Enter 6-digit TOTP from your Authenticator app to refresh session:</div>
+                </div>
+                <div style="display: flex; gap: 8px;">
+                  <input type="text" id="input-kotak-totp" placeholder="6-digit TOTP" maxlength="6" style="width: 110px; padding: 6px 10px; background: #0f172a; border: 1px solid rgba(255,255,255,0.2); border-radius: 6px; color: #f8fafc; font-family: monospace; font-size: 13px; text-align: center;">
+                  <button class="btn btn-primary" id="btn-kotak-login-submit" style="padding: 6px 14px; font-size: 12px; background: #0284c7;">
+                    Connect Kotak
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <script src="/static/app.js?v=20261030_v6"></script>
+</body>
+</html>
