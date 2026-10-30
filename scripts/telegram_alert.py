@@ -10,22 +10,44 @@ import urllib.request
 import urllib.parse
 import urllib.error
 
+# Ensure UTF-8 console output on Windows platforms
+if sys.platform == "win32":
+    try:
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
-ENV_FILE = os.path.expanduser("~/.trading_bot.env")
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(SCRIPT_DIR)
 
 
 def _load_env():
-    if not os.environ.get("TELEGRAM_BOT_TOKEN") and os.path.isfile(ENV_FILE):
-        with open(ENV_FILE) as f:
-            for line in f:
-                line = line.strip()
-                if line.startswith("#") or "=" not in line:
-                    continue
-                key, _, val = line.partition("=")
-                key = key.strip()
-                val = val.strip().strip('"').strip("'")
-                if key in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"):
-                    os.environ.setdefault(key, val)
+    """Load TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID from .env or home config."""
+    candidate_files = [
+        os.path.join(os.getcwd(), ".env"),
+        os.path.join(REPO_ROOT, ".env"),
+        os.path.expanduser("~/.trading_bot.env"),
+        os.path.expanduser("~/.env"),
+    ]
+    for env_file in candidate_files:
+        try:
+            if os.path.isfile(env_file):
+                with open(env_file, "r", encoding="utf-8", errors="ignore") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line.startswith("#") or "=" not in line:
+                            continue
+                        key, _, val = line.partition("=")
+                        key = key.strip()
+                        val = val.strip().strip('"').strip("'")
+                        if key in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"):
+                            if not os.environ.get(key) and val:
+                                os.environ[key] = val
+        except Exception:
+            continue
 
 
 _load_env()
@@ -33,10 +55,21 @@ BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 
+def get_credentials():
+    """Returns (bot_token, chat_id), reloading environment if missing."""
+    global BOT_TOKEN, CHAT_ID
+    if not BOT_TOKEN or not CHAT_ID:
+        _load_env()
+        BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+        CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+    return BOT_TOKEN, CHAT_ID
+
+
 def bot_request(method, params=None):
-    if not BOT_TOKEN:
+    token, _ = get_credentials()
+    if not token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN not set.")
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
+    url = f"https://api.telegram.org/bot{token}/{method}"
     if params:
         data = urllib.parse.urlencode(params).encode('utf-8')
     else:
@@ -53,34 +86,41 @@ def bot_request(method, params=None):
 
 
 def send_alert(message, parse_mode="Markdown"):
-    if not CHAT_ID:
+    token, chat_id = get_credentials()
+    if not chat_id:
         raise RuntimeError("TELEGRAM_CHAT_ID not set.")
+
+    params = {
+        "chat_id": chat_id,
+        "text": message,
+        "disable_web_page_preview": "true",
+    }
+    if parse_mode:
+        params["parse_mode"] = parse_mode
+
     try:
-        result = bot_request("sendMessage", {
-            "chat_id": CHAT_ID,
-            "text": message,
-            "parse_mode": parse_mode,
-            "disable_web_page_preview": "true",
-        })
+        result = bot_request("sendMessage", params)
         return bool(result.get("ok"))
     except RuntimeError as e:
-        if parse_mode == "Markdown":
+        # If Markdown entity parsing failed, retry as plain text (no parse_mode)
+        if parse_mode:
             try:
-                result = bot_request("sendMessage", {
-                    "chat_id": CHAT_ID,
+                fallback_params = {
+                    "chat_id": chat_id,
                     "text": message,
-                    "parse_mode": "",
                     "disable_web_page_preview": "true",
-                })
+                }
+                result = bot_request("sendMessage", fallback_params)
                 return bool(result.get("ok"))
-            except Exception:
-                pass
+            except Exception as e2:
+                print(f"  ! Telegram fallback send failed: {e2}", file=sys.stderr)
         print(f"  ! Telegram send failed: {e}", file=sys.stderr)
         return False
 
 
 def send_document(file_path, caption=""):
-    if not CHAT_ID or not BOT_TOKEN:
+    token, chat_id = get_credentials()
+    if not chat_id or not token:
         raise RuntimeError("Telegram credentials not set.")
     if not os.path.isfile(file_path):
         raise FileNotFoundError(f"File not found: {file_path}")
@@ -93,7 +133,7 @@ def send_document(file_path, caption=""):
     body = (
         f"--{boundary}\r\n"
         f'Content-Disposition: form-data; name="chat_id"\r\n\r\n'
-        f"{CHAT_ID}\r\n"
+        f"{chat_id}\r\n"
         f"--{boundary}\r\n"
         f'Content-Disposition: form-data; name="caption"\r\n\r\n'
         f"{caption}\r\n"
@@ -102,7 +142,7 @@ def send_document(file_path, caption=""):
         f"Content-Type: application/pdf\r\n\r\n"
     ).encode('utf-8') + file_data + f"\r\n--{boundary}--\r\n".encode('utf-8')
 
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument"
+    url = f"https://api.telegram.org/bot{token}/sendDocument"
     req = urllib.request.Request(url, data=body, method='POST')
     req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
     try:
@@ -140,11 +180,11 @@ def format_scan_summary(scan_data, max_winners=3, max_near_miss=5):
         lines.append(f"_(all 7 rules pass — Mansfield RS shown)_")
         for r in qualifying[:max_winners]:
             sym = r.get("symbol", "?")
-            price = r.get("last_price", 0)
-            rsi = r.get("rsi_d", 0)
-            ema30w = r.get("ema30_w", 0)
-            ema60m = r.get("ema60_m", 0)
-            mrs = r.get("mansfield_rs", 0)
+            price = r.get("last_price") or 0.0
+            rsi = r.get("rsi_d") or 0.0
+            ema30w = r.get("ema30_w") or 0.0
+            ema60m = r.get("ema60_m") or 0.0
+            mrs = r.get("mansfield_rs") or 0.0
             lines.append(f"")
             lines.append(f"*{sym}* Rs {price:,.2f}")
             lines.append(f"  RSI: {rsi:.1f}")
@@ -164,12 +204,13 @@ def format_scan_summary(scan_data, max_winners=3, max_near_miss=5):
         lines.append(f"*⚠ NEAR-MISS WATCHLIST* (6/7 rules)")
         for r in near_miss[:max_near_miss]:
             sym = r.get("symbol", "?")
-            price = r.get("last_price", 0)
-            rsi = r.get("rsi_d", 0)
-            mrs = r.get("mansfield_rs", 0)
+            price = r.get("last_price") or 0.0
+            rsi = r.get("rsi_d") or 0.0
+            mrs = r.get("mansfield_rs") or 0.0
+            rules = r.get("rules") or {}
             failed = [k.replace("rule", "").split("_", 1)[0]
-                      for k, v in r.get("rules", {}).items() if not v]
-            fail_str = ",".join(failed)
+                      for k, v in rules.items() if not v]
+            fail_str = ",".join(failed) if failed else "?"
             lines.append(f"• *{sym}* Rs {price:,.2f} · RSI {rsi:.1f} · MRS {mrs:+.2f} · R{fail_str} fail")
 
     lines.append(f"")
@@ -196,6 +237,20 @@ def send_scan_summary(scan_data, pdf_path=None):
     return True
 
 
+def send_error_alert(title, error_details):
+    """Send an operational error alert to Telegram if a scan fails."""
+    lines = [
+        f"⚠️ *STOCK SCANNER ERROR*",
+        f"*{title}*",
+        f"",
+        f"Details:",
+        f"```{str(error_details)[:3000]}```",
+        f"",
+        f"_Please check GitHub Actions or system logs._",
+    ]
+    return send_alert("\n".join(lines))
+
+
 def main():
     if len(sys.argv) < 2:
         print("Usage: python3 telegram_alert.py \"your message\"")
@@ -203,22 +258,24 @@ def main():
         print("Or:    python3 telegram_alert.py --test")
         sys.exit(1)
 
+    token, chat_id = get_credentials()
+
     if sys.argv[1] == "--status":
-        print(f"TELEGRAM_BOT_TOKEN: {'✓ set' if BOT_TOKEN else '✗ missing'}")
-        print(f"TELEGRAM_CHAT_ID:    {'✓ set' if CHAT_ID else '✗ missing'}")
-        if BOT_TOKEN and CHAT_ID:
+        print(f"TELEGRAM_BOT_TOKEN: {'[OK] set' if token else '[X] missing'}")
+        print(f"TELEGRAM_CHAT_ID:    {'[OK] set' if chat_id else '[X] missing'}")
+        if token and chat_id:
             try:
                 me = bot_request("getMe")
                 if me.get("ok"):
                     bot = me["result"]
-                    print(f"Bot: @{bot['username']} ({bot['first_name']})")
-                    print(f"→ ready to send alerts to chat_id {CHAT_ID}")
+                    print(f"Bot: @{bot.get('username')} ({bot.get('first_name')})")
+                    print(f"-> Ready to send alerts to chat_id {chat_id}")
                 else:
-                    print(f"✗ Bot token invalid: {me}")
+                    print(f"[X] Bot token invalid: {me}")
             except Exception as e:
-                print(f"✗ Bot token check failed: {e}")
+                print(f"[X] Bot token check failed: {e}")
         else:
-            print("\nRun: python3 setup_telegram.py  to configure")
+            print("\nPlease ensure TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are set in .env or environment.")
         return
 
     if sys.argv[1] == "--test":
@@ -229,16 +286,16 @@ def main():
             "_— Multi-Timeframe Momentum Scanner_"
         )
         if send_alert(msg):
-            print("✓ Test alert sent successfully!")
+            print("[OK] Test alert sent successfully!")
         else:
-            print("✗ Test alert failed. Check credentials.")
+            print("[X] Test alert failed. Check credentials.")
         return
 
     msg = " ".join(sys.argv[1:])
     if send_alert(msg):
-        print(f"✓ Alert sent: {msg[:60]}{'...' if len(msg) > 60 else ''}")
+        print(f"[OK] Alert sent: {msg[:60]}{'...' if len(msg) > 60 else ''}")
     else:
-        print("✗ Alert failed.")
+        print("[X] Alert failed.")
         sys.exit(1)
 
 

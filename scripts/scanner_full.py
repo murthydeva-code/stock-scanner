@@ -219,14 +219,17 @@ def send_telegram_alert(scan_output):
         sys.path.insert(0, SCRIPT_DIR)
         import telegram_alert
     except ImportError:
+        print("  ! telegram_alert module not found - skipping alert.")
         return
     except Exception as e:
         print(f"  ! Telegram module load failed: {e}")
         return
 
-    if not telegram_alert.BOT_TOKEN or not telegram_alert.CHAT_ID:
+    token, chat_id = telegram_alert.get_credentials()
+    if not token or not chat_id:
         print()
-        print("  Telegram not configured - skipping alert.")
+        print("  ! Telegram not configured (missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID).")
+        print("    Add them to .env or GitHub Repository Secrets.")
         return
 
     print()
@@ -235,11 +238,11 @@ def send_telegram_alert(scan_output):
         pdf_path = WATCHLIST_PDF_PATH if os.path.isfile(WATCHLIST_PDF_PATH) else None
         success = telegram_alert.send_scan_summary(scan_output, pdf_path=pdf_path)
         if success:
-            print("  Alert sent to Telegram.")
+            print("  ✓ Alert sent to Telegram.")
         else:
-            print("  Alert send failed.")
+            print("  ! Alert send failed.")
     except Exception as e:
-        print(f"  Telegram alert error: {e}")
+        print(f"  ! Telegram alert error: {e}")
 
 
 def main():
@@ -259,16 +262,43 @@ def main():
             auto_adjust=False, threads=True, progress=False,
         )
     except Exception as e:
-        print(f"  BATCH FETCH ERROR: {e}")
-        return
+        err_msg = f"Batch yfinance download failed: {e}"
+        print(f"  BATCH FETCH ERROR: {err_msg}")
+        try:
+            sys.path.insert(0, SCRIPT_DIR)
+            import telegram_alert
+            telegram_alert.send_error_alert("Yahoo Finance Batch Fetch Failed", err_msg)
+        except Exception:
+            pass
+        sys.exit(1)
 
     print(f"  Batch fetch complete in {time.time()-t0:.1f}s")
     print()
 
-    if NIFTY_50_SYMBOL not in batch_data.columns.get_level_values(0):
-        print(f"  ERROR: NIFTY 50 not in batch data. Aborting.")
-        return
-    nifty_daily = batch_data[NIFTY_50_SYMBOL].dropna()
+    # Determine whether ticker is on level 0 or level 1 of MultiIndex
+    ticker_level = None
+    if isinstance(batch_data.columns, pd.MultiIndex):
+        if NIFTY_50_SYMBOL in batch_data.columns.get_level_values(0):
+            ticker_level = 0
+        elif batch_data.columns.nlevels > 1 and NIFTY_50_SYMBOL in batch_data.columns.get_level_values(1):
+            ticker_level = 1
+
+    if ticker_level is None:
+        err_msg = f"Benchmark NIFTY 50 ({NIFTY_50_SYMBOL}) not found in downloaded data. Aborting scan."
+        print(f"  ERROR: {err_msg}")
+        try:
+            sys.path.insert(0, SCRIPT_DIR)
+            import telegram_alert
+            telegram_alert.send_error_alert("Scan Benchmark Missing", err_msg)
+        except Exception:
+            pass
+        sys.exit(1)
+
+    if ticker_level == 0:
+        nifty_daily = batch_data[NIFTY_50_SYMBOL].dropna()
+    else:
+        nifty_daily = batch_data.xs(NIFTY_50_SYMBOL, level=1, axis=1).dropna()
+
     print(f"  NIFTY 50: {len(nifty_daily)} bars, last close = Rs {nifty_daily['Close'].iloc[-1]:.2f}")
     print()
 
@@ -281,12 +311,17 @@ def main():
         clean_sym = sym_ns.replace('.NS', '')
         print(f"  [{i:03d}/{len(NSE_SYMBOLS)}] {clean_sym:16s}", end=" ", flush=True)
 
-        if sym_ns not in batch_data.columns.get_level_values(0):
+        is_present = (sym_ns in batch_data.columns.get_level_values(0)) if ticker_level == 0 else (sym_ns in batch_data.columns.get_level_values(1))
+        if not is_present:
             print("FAIL (not in batch)")
             fetch_failed.append(clean_sym)
             continue
 
-        stock_daily = batch_data[sym_ns].dropna().copy()
+        if ticker_level == 0:
+            stock_daily = batch_data[sym_ns].dropna().copy()
+        else:
+            stock_daily = batch_data.xs(sym_ns, level=1, axis=1).dropna().copy()
+
         if stock_daily.empty:
             print("FAIL (empty)")
             fetch_failed.append(clean_sym)

@@ -2,13 +2,14 @@ name: Daily Stock Scan
 
 on:
   schedule:
+    # 11:30 UTC = 17:00 IST (5:00 PM IST), Monday to Friday (after Indian market close at 15:30 IST)
     - cron: '30 11 * * 1-5'
   workflow_dispatch:
 
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     
     steps:
       - name: Checkout repository
@@ -19,31 +20,36 @@ jobs:
         with:
           python-version: '3.12'
       
-      - name: Install Python dependencies (with debug)
+      - name: Install Python dependencies
         run: |
-          echo "=== Upgrading pip ==="
           python -m pip install --upgrade pip
-          echo "=== Installing numpy ==="
-          pip install numpy
-          echo "=== Installing pandas ==="
-          pip install pandas
-          echo "=== Installing yfinance ==="
-          pip install yfinance
-          echo "=== Installed packages (verification) ==="
-          pip list | grep -i numpy
-          pip list | grep -i pandas
-          pip list | grep -i yfinance
+          pip install numpy pandas yfinance
+          pip list | grep -E "numpy|pandas|yfinance"
       
-      - name: Run scanner (auto-sends Telegram text alert)
+      - name: Verify Telegram credentials
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "::warning::TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID secret is not set in GitHub repository settings!"
+            echo "::notice::Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in GitHub repo Settings -> Secrets and variables -> Actions."
+          else
+            echo "Telegram credentials verified in GitHub secrets."
+          fi
+
+      - name: Run scanner (auto-sends Telegram alert)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python3 scripts/scanner_full.py
       
-      - name: Upload scan results as artifact (kept for 30 days)
+      - name: Upload scan results as artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: scan-results-${{ github.run_id }}
           path: output/
+          if-no-files-found: warn
           retention-days: 30
