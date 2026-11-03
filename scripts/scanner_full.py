@@ -19,14 +19,43 @@ import os
 import time
 from datetime import datetime
 
-import numpy as np
-import pandas as pd
+# --- Guarded library imports --------------------------------------------
+# numpy 2.x is ABI-incompatible with older pandas / yfinance builds.
+# Top-level `import numpy as np` / `import pandas as pd` used to crash the
+# whole scanner on bad deployments. Guard the imports and bail cleanly.
+_IMPORT_ERRORS = []
+try:
+    import numpy as np
+except Exception as _e:  # noqa: BLE001
+    _IMPORT_ERRORS.append(f"numpy: {type(_e).__name__}: {_e}")
+    np = None  # type: ignore[assignment]
+
+try:
+    import pandas as pd
+except Exception as _e:  # noqa: BLE001
+    _IMPORT_ERRORS.append(f"pandas: {type(_e).__name__}: {_e}")
+    pd = None  # type: ignore[assignment]
 
 try:
     import yfinance as yf
-except ImportError:
-    print("ERROR: yfinance not installed. Run: pip install -r requirements.txt")
+except Exception as _e:  # noqa: BLE001
+    _IMPORT_ERRORS.append(f"yfinance: {type(_e).__name__}: {_e}")
+    yf = None  # type: ignore[assignment]
+
+if _IMPORT_ERRORS:
+    print("ERROR: dependency import failed:")
+    for e in _IMPORT_ERRORS:
+        print(f"  - {e}")
+    print("Fix: pin numpy<2 in requirements.txt: "
+          "numpy==1.26.4 pandas==2.2.2 yfinance==0.2.40")
     sys.exit(1)
+
+# Fetch tuning (env-overridable). The old code fetched ALL ~348 symbols
+# in one yf.download() call with threads=True — the most aggressive
+# possible pattern, guaranteed to trip Yahoo's rate limiter.
+_YF_BATCH_SIZE = int(os.environ.get("SCAN_YF_BATCH_SIZE", "10"))
+_YF_MAX_RETRIES = int(os.environ.get("SCAN_YF_MAX_RETRIES", "3"))
+_YF_TIMEOUT = int(os.environ.get("SCAN_YF_TIMEOUT", "120"))  # 5y data is heavy
 
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -256,23 +285,61 @@ def main():
     t0 = time.time()
 
     all_symbols = NSE_SYMBOLS + [NIFTY_50_SYMBOL]
-    try:
-        batch_data = yf.download(
-            all_symbols, period=DATA_PERIOD, group_by='ticker',
-            auto_adjust=False, threads=True, progress=False,
-        )
-    except Exception as e:
-        err_msg = f"Batch yfinance download failed: {e}"
-        print(f"  BATCH FETCH ERROR: {err_msg}")
+
+    # Batched fetch with retry + backoff. Was: single yf.download() for all
+    # ~348 symbols with threads=True, no timeout, no retry — that single
+    # call was the #1 cause of Yahoo rate-limiting on this repo.
+    print(f"  Fetching {len(all_symbols)} symbols in batches of {_YF_BATCH_SIZE}...", flush=True)
+
+    chunk_dfs = []
+    failed_symbols = []
+    n_batches = (len(all_symbols) + _YF_BATCH_SIZE - 1) // _YF_BATCH_SIZE
+
+    for bi, i in enumerate(range(0, len(all_symbols), _YF_BATCH_SIZE), 1):
+        batch = all_symbols[i:i + _YF_BATCH_SIZE]
+        chunk_df = None
+        for attempt in range(_YF_MAX_RETRIES):
+            try:
+                chunk_df = yf.download(
+                    batch, period=DATA_PERIOD, group_by='ticker',
+                    auto_adjust=False, threads=False, progress=False,
+                    timeout=_YF_TIMEOUT,
+                )
+                break
+            except Exception as e:  # noqa: BLE001
+                wait = 2 ** attempt
+                print(f"  ! batch {bi}/{n_batches} attempt {attempt+1} failed: {e}; sleeping {wait}s", flush=True)
+                time.sleep(wait)
+        if chunk_df is None or chunk_df.empty:
+            print(f"  ! batch {bi}/{n_batches} returned no data; skipping {len(batch)} symbols", flush=True)
+            failed_symbols.extend([s.replace('.NS', '') for s in batch if s != NIFTY_50_SYMBOL])
+            continue
+        # Normalize single-ticker batches (flat columns) to MultiIndex so
+        # pd.concat below produces a consistent (ticker, field) layout.
+        if not isinstance(chunk_df.columns, pd.MultiIndex) and len(batch) == 1:
+            ticker = batch[0]
+            chunk_df = chunk_df.copy()
+            chunk_df.columns = pd.MultiIndex.from_product(
+                [[ticker], chunk_df.columns],
+            )
+        chunk_dfs.append(chunk_df)
+        print(f"  batch {bi}/{n_batches} ok ({len(batch)} symbols)", flush=True)
+        time.sleep(0.5)  # be polite to Yahoo
+
+    if not chunk_dfs:
+        err_msg = "All yfinance batch fetches failed (rate-limited or network error)"
+        print(f"  FATAL: {err_msg}")
         try:
             sys.path.insert(0, SCRIPT_DIR)
             import telegram_alert
-            telegram_alert.send_error_alert("Yahoo Finance Batch Fetch Failed", err_msg)
+            telegram_alert.send_error_alert("Yahoo Finance All Batches Failed", err_msg)
         except Exception:
             pass
         sys.exit(1)
 
-    print(f"  Batch fetch complete in {time.time()-t0:.1f}s")
+    batch_data = pd.concat(chunk_dfs, axis=1) if len(chunk_dfs) > 1 else chunk_dfs[0]
+    print(f"  Batch fetch complete in {time.time()-t0:.1f}s "
+          f"({len(chunk_dfs)} batches, {len(failed_symbols)} failed)", flush=True)
     print()
 
     # Determine whether ticker is on level 0 or level 1 of MultiIndex
