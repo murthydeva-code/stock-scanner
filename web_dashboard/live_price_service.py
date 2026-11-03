@@ -16,14 +16,32 @@ import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-import pandas as pd
+# --- Guarded library imports --------------------------------------------
+# numpy 2.x ABI-incompatible with older pandas/yfinance builds. Top-level
+# `import pandas as pd` used to crash the whole module on bad deployments.
+# Now we guard the import and let the fetch function bail cleanly.
+_IMPORT_ERRORS: List[str] = []
+try:
+    import pandas as pd
+except Exception as _e:  # noqa: BLE001
+    _IMPORT_ERRORS.append(f"pandas: {type(_e).__name__}: {_e}")
+    pd = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
+
+# Fetch tuning (env-overridable). Defaults stay well under Yahoo's rate
+# limit window for a single server IP.
+_YF_BATCH_SIZE = int(os.environ.get("LIVE_YF_BATCH_SIZE", "10"))  # was 100
+_YF_MAX_RETRIES = int(os.environ.get("LIVE_YF_MAX_RETRIES", "3"))
+_YF_TIMEOUT = int(os.environ.get("LIVE_YF_TIMEOUT", "30"))  # was 8
 
 # In-memory price cache: symbol -> {"last_price": float, "change": float, "updated_at": float}
 _price_cache: Dict[str, Dict[str, Any]] = {}
 _cache_lock = threading.Lock()
-_CACHE_TTL_SECONDS = 5.0  # Cache quotes for 5 seconds
+# Cache TTL bumped from 5s -> 60s (env-overridable). 5-second cache caused
+# every dashboard refresh to re-hit Yahoo, which is the primary cause of
+# yfinance rate-limiting / 429s.
+_CACHE_TTL_SECONDS = float(os.environ.get("LIVE_CACHE_TTL", "60"))
 
 
 def fetch_live_quotes_nse(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
@@ -44,63 +62,82 @@ def fetch_live_quotes_nse(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
     if not yf_tickers:
         return quotes
 
+    # Guarded import — if yfinance failed to load (numpy 2.x ABI break,
+    # missing dep, etc.) bail cleanly with empty quotes instead of crashing.
     try:
         import yfinance as yf
-        # Chunk into batches of 100 to prevent request timeouts
-        chunk_size = 100
-        now_ts = time.time()
-        now_iso = datetime.now().strftime("%Y-%m-%d %H:%M:%S IST")
+    except Exception as e:  # noqa: BLE001
+        logger.error("yfinance unavailable: %s", e)
+        return quotes
 
-        for i in range(0, len(yf_tickers), chunk_size):
-            chunk = yf_tickers[i:i + chunk_size]
+    if pd is None:
+        logger.error("pandas unavailable, cannot parse yfinance output")
+        return quotes
+
+    # Chunk into small batches with retry + backoff.
+    # Was: batches of 100, threads=True, timeout=8 -> Yahoo 429s galore.
+    now_ts = time.time()
+    now_iso = datetime.now().strftime("%Y-%m-%d %H:%M:%S IST")
+
+    for i in range(0, len(yf_tickers), _YF_BATCH_SIZE):
+        chunk = yf_tickers[i:i + _YF_BATCH_SIZE]
+        df = None
+        for attempt in range(_YF_MAX_RETRIES):
             try:
                 df = yf.download(
                     tickers=chunk,
                     period="1d",
                     interval="1m",
                     progress=False,
-                    threads=True,
-                    timeout=8
+                    threads=False,        # threads=True triggers Yahoo 429s
+                    timeout=_YF_TIMEOUT,
                 )
-                if df is not None and not df.empty:
-                    for yf_sym in chunk:
-                        sym = clean_map.get(yf_sym)
-                        if not sym:
-                            continue
-                        try:
-                            close_series = None
-                            if isinstance(df.columns, pd.MultiIndex):
-                                if "Close" in df.columns.levels[0]:
-                                    close_col = df["Close"]
-                                    if yf_sym in close_col:
-                                        close_series = close_col[yf_sym].dropna()
-                            else:
-                                if "Close" in df:
-                                    close_series = df["Close"].dropna()
+                break
+            except Exception as batch_err:  # noqa: BLE001
+                wait = 2 ** attempt
+                logger.warning(
+                    "live yf batch %d attempt %d failed: %s; sleeping %ds",
+                    i // _YF_BATCH_SIZE + 1, attempt + 1, batch_err, wait,
+                )
+                time.sleep(wait)
+        if df is None or df.empty:
+            continue
+        for yf_sym in chunk:
+            sym = clean_map.get(yf_sym)
+            if not sym:
+                continue
+            try:
+                close_series = None
+                if isinstance(df.columns, pd.MultiIndex):
+                    if "Close" in df.columns.levels[0]:
+                        close_col = df["Close"]
+                        if yf_sym in close_col:
+                            close_series = close_col[yf_sym].dropna()
+                else:
+                    # Single-ticker batch — df["Close"] is a Series.
+                    if "Close" in df:
+                        close_series = df["Close"].dropna()
 
-                            if close_series is not None and not close_series.empty:
-                                last_p = round(float(close_series.iloc[-1]), 2)
-                                first_p = round(float(close_series.iloc[0]), 2)
-                                chg_pct = round(((last_p - first_p) / first_p) * 100.0, 2) if first_p > 0 else 0.0
+                if close_series is not None and not close_series.empty:
+                    last_p = round(float(close_series.iloc[-1]), 2)
+                    first_p = round(float(close_series.iloc[0]), 2)
+                    chg_pct = round(((last_p - first_p) / first_p) * 100.0, 2) if first_p > 0 else 0.0
 
-                                quote_info = {
-                                    "symbol": sym,
-                                    "last_price": last_p,
-                                    "change": chg_pct,
-                                    "source": "NSE_LIVE",
-                                    "timestamp": now_iso,
-                                    "updated_at": now_ts,
-                                }
-                                quotes[sym] = quote_info
-                                with _cache_lock:
-                                    _price_cache[sym] = quote_info
-                        except Exception:
-                            pass
-            except Exception as batch_err:
-                logger.debug(f"NSE batch download error: {batch_err}")
-
-    except Exception as e:
-        logger.debug(f"fetch_live_quotes_nse error: {e}")
+                    quote_info = {
+                        "symbol": sym,
+                        "last_price": last_p,
+                        "change": chg_pct,
+                        "source": "NSE_LIVE",
+                        "timestamp": now_iso,
+                        "updated_at": now_ts,
+                    }
+                    quotes[sym] = quote_info
+                    with _cache_lock:
+                        _price_cache[sym] = quote_info
+            except Exception as parse_err:  # noqa: BLE001
+                logger.debug("yf parse failed for %s: %s", yf_sym, parse_err)
+        # Be polite to Yahoo between batches.
+        time.sleep(0.5)
 
     return quotes
 
