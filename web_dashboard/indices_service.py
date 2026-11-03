@@ -343,3 +343,142 @@ INDICES_MASTER = [
         "desc": "Services sector (Telecom, Transport, IT)",
     },
 ]
+# Internal quote cache. TTL bumped from 3s -> 300s (env-overridable).
+# The old 3-second TTL caused every dashboard refresh to re-hit Yahoo,
+# which is the primary cause of the yfinance rate-limiting / 429s that
+# surfaced as fake "numpy import errors".
+_indices_cache: Dict[str, Any] = {}
+_last_fetch_ts: float = 0.0
+_cache_ttl = float(os.environ.get("INDICES_CACHE_TTL", "300"))  # seconds
+_cache_lock = threading.Lock()
+
+# Track the last yfinance error so we can surface it in the payload for the
+# dashboard to display instead of a generic 502.
+_last_yf_error: Optional[str] = None
+
+
+def get_all_indices_data(
+    kite_client: Optional[Any] = None,
+    kotak_client: Optional[Any] = None,
+    force_refresh: bool = False
+) -> Dict[str, Any]:
+    """
+    Fetch consolidated live quotes for all Indian market indices.
+    Tries Kite API -> Kotak Neo -> Yahoo Finance -> Cached Fallback.
+    """
+    global _indices_cache, _last_fetch_ts
+
+    with _cache_lock:
+        now = time.time()
+        if not force_refresh and _indices_cache and (now - _last_fetch_ts) < _cache_ttl:
+            return _indices_cache
+
+    indices_result: List[Dict[str, Any]] = []
+    source = "Kotak Neo API Live" if (kotak_client and getattr(kotak_client, "is_configured", lambda: False)()) else "YFinance (NSE/BSE Real-time)"
+
+    # 1. Try Kotak Neo API if active
+    kotak_etf_quotes: Dict[str, Any] = {}
+    if kotak_client and (getattr(kotak_client, "is_authenticated", lambda: False)() or getattr(kotak_client, "is_configured", lambda: False)()):
+        try:
+            kotak_etf_quotes = kotak_client.get_live_quotes(["NIFTYBEES", "BANKBEES", "GOLDBEES"])
+            source = "Kotak Neo API Live"
+        except Exception as e:
+            logger.debug(f"Kotak Neo index quotes notice: {e}")
+
+    # 2. Try Kite Connect API if active
+    kite_quotes: Dict[str, Any] = {}
+    if kite_client and hasattr(kite_client, "is_authenticated") and kite_client.is_authenticated():
+        try:
+            kite_syms = [item["kite_sym"] for item in INDICES_MASTER if item.get("kite_sym")]
+            # Kite quotes in batches of 50
+            kite_quotes = kite_client.kite.quote(kite_syms)
+            source = "Zerodha Kite Connect Live"
+        except Exception as e:
+            logger.debug(f"Kite quote failed: {e}")
+
+    # 2. Try Yahoo Finance batch download for full coverage & fallback.
+    #    Rewritten to: (a) skip cleanly if yfinance/pandas failed to import,
+    #    (b) fetch in small batches with retry + exponential backoff,
+    #    (c) use threads=False (multi-threaded downloads trigger Yahoo 429s),
+    #    (d) use a sane timeout (was 6s, now 30s by default).
+    global _last_yf_error
+    yf_tickers = [item["yf_ticker"] for item in INDICES_MASTER if item.get("yf_ticker")]
+    yf_data: Dict[str, Any] = {}
+
+    if yf is None or pd is None:
+        # Dependency missing/broken — surface the reason, do NOT crash.
+        _last_yf_error = "; ".join(_IMPORT_ERRORS) or "yfinance/pandas not available"
+        logger.error("yfinance/pandas unavailable: %s", _last_yf_error)
+    else:
+        batch_errors: List[str] = []
+        for i in range(0, len(yf_tickers), _YF_BATCH_SIZE):
+            batch = yf_tickers[i:i + _YF_BATCH_SIZE]
+            df = None
+            for attempt in range(_YF_MAX_RETRIES):
+                try:
+                    df = yf.download(
+                        tickers=batch,
+                        period="2d",
+                        interval="1d",
+                        progress=False,
+                        threads=False,        # threads=True triggers Yahoo 429s
+                        timeout=_YF_TIMEOUT,
+                    )
+                    break
+                except Exception as e:  # noqa: BLE001 — retry any error
+                    wait = 2 ** attempt
+                    logger.warning(
+                        "yf batch %d/%d attempt %d failed: %s; sleeping %ds",
+                        i // _YF_BATCH_SIZE + 1,
+                        (len(yf_tickers) + _YF_BATCH_SIZE - 1) // _YF_BATCH_SIZE,
+                        attempt + 1, e, wait,
+                    )
+                    time.sleep(wait)
+            if df is None or df.empty:
+                batch_errors.append(",".join(batch))
+                continue
+            for item in INDICES_MASTER:
+                ticker = item["yf_ticker"]
+                if ticker not in batch:
+                    continue
+                try:
+                    close_col = df["Close"]
+                    if isinstance(close_col, pd.DataFrame) and ticker in close_col.columns:
+                        series = close_col[ticker].dropna()
+                    elif isinstance(close_col, pd.Series):
+                        # Single-ticker batch — df["Close"] is a Series.
+                        series = close_col.dropna()
+                    else:
+                        continue
+                    if len(series) >= 2:
+                        prev_close = float(series.iloc[-2])
+                        ltp = float(series.iloc[-1])
+                        change_pts = ltp - prev_close
+                        change_pct = (change_pts / prev_close) * 100.0 if prev_close > 0 else 0.0
+                        yf_data[item["id"]] = {
+                            "ltp": round(ltp, 2),
+                            "prev_close": round(prev_close, 2),
+                            "change_pts": round(change_pts, 2),
+                            "change_pct": round(change_pct, 2),
+                        }
+                    elif len(series) == 1:
+                        ltp = float(series.iloc[-1])
+                        yf_data[item["id"]] = {
+                            "ltp": round(ltp, 2),
+                            "prev_close": round(ltp, 2),
+                            "change_pts": 0.0,
+                            "change_pct": 0.0,
+                        }
+                except Exception as e:  # noqa: BLE001
+                    logger.debug("yf parse failed for %s: %s", ticker, e)
+            # Be polite to Yahoo between batches.
+            time.sleep(0.5)
+        if batch_errors:
+            _last_yf_error = f"{len(batch_errors)} batch(es) failed: " + "; ".join(batch_errors)
+        else:
+            _last_yf_error = None
+
+    # 3. Assemble composite index cards
+    advances = 0
+    declines = 0
+    unchanged = 0
