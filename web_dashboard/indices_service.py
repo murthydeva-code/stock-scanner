@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""
+
 Indian Market Indices Service for KitePilot & NeoPilot Dashboard.
 #!/usr/bin/env python3
-"""
+
 Indian Market Indices Service for KitePilot & NeoPilot Dashboard.
 Provides real-time quotes, sector heatmap, and breadth analytics for all NSE/BSE indices:
   1. Broad Market Indices (Nifty 50, Sensex, Nifty 500, Midcap, Smallcap, Microcap, India VIX)
@@ -13,7 +13,7 @@ Multi-Layer Data Architecture:
   Layer 1: Zerodha Kite live quote (if authenticated)
   Layer 2: Kotak Neo live quote (if active)
   Layer 3: Yahoo Finance real-time batch feed (high-speed fallback)
-"""
+
 from __future__ import annotations
 
 import logging
